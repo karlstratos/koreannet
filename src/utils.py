@@ -1,6 +1,6 @@
 from collections import Counter
 import re
-
+from jamo import decompose
 
 class ConllEntry:
     def __init__(self, id, form, pos, cpos, parent_id=None, relation=None):
@@ -56,6 +56,7 @@ def isProj(sentence):
     return len(forest.roots) == 1
 
 def vocab(conll_path):
+    jamosCount = Counter()
     charsCount = Counter()
     wordsCount = Counter()
     posCount = Counter()
@@ -67,31 +68,17 @@ def vocab(conll_path):
             for node in sentence:
                 if (node.norm == "*root*"): continue  # No morphology there...
                 for char in unicode(node.norm,"utf-8"):
+                    jamosCount.update(decompose(char))
                     chars.append(char.encode('utf-8'))
             charsCount.update(chars)
             wordsCount.update([node.norm for node in sentence])
             posCount.update([node.pos for node in sentence])
             relCount.update([node.relation for node in sentence])
 
-    return (charsCount, {c: i for i, c in enumerate(charsCount.keys())}, wordsCount, {w: i for i, w in enumerate(wordsCount.keys())}, posCount.keys(), relCount.keys())
-
-def read_jamos(jamos_path):
-    jamosCount = Counter()
-    char2jamos = {}
-    if not jamos_path: return {}, {}, {}
-
-    with open(jamos_path, 'r') as jamosFP:
-        for line in jamosFP:
-            toks = line.split()
-            if toks:
-                char = unicode(toks[0], "utf-8")
-                char2jamos[char] = []
-                for jamo in toks[1:]:
-                    jamo = unicode(jamo, "utf-8")
-                    char2jamos[char].append(jamo)
-                    jamosCount[jamo] += 1
-
-    return char2jamos, jamosCount, {jamo: i for i, jamo in enumerate(jamosCount.keys())}
+    return (jamosCount, {j: i for i, j in enumerate(jamosCount.keys())},
+            charsCount, {c: i for i, c in enumerate(charsCount.keys())},
+            wordsCount, {w: i for i, w in enumerate(wordsCount.keys())},
+            posCount.keys(), relCount.keys())
 
 def read_conll(fh, proj):
     dropped = 0

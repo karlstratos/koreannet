@@ -4,10 +4,16 @@ from operator import itemgetter
 from itertools import chain
 import utils, time, random
 import numpy as np
+from jamo import decompose
+
+first_report = True
+
+def disable_first_report():
+    global first_report
+    first_report = False
 
 class ArcHybridLSTM:
-    def __init__(self, words, pos, rels, w2i, char2jamos, jamos, j2i,
-                 chars, c2i, options):
+    def __init__(self, words, pos, rels, w2i, jamos, j2i, chars, c2i, options):
         self.model = Model()
         self.trainer = AdamTrainer(self.model)
         random.seed(1)
@@ -17,15 +23,14 @@ class ArcHybridLSTM:
 
         self.oracle = options.oracle
         self.ldims = options.lstm_dims * 2
-        self.jdims = options.jembedding_dims
         self.cdims = options.cembedding_dims
         self.wdims = options.wembedding_dims
         self.pdims = options.pembedding_dims
         self.rdims = options.rembedding_dims
         self.layers = options.lstm_layers
-        self.char2jamos = char2jamos
         self.jamosCount = jamos
-        self.jvocab = {jamo: ind+1 for jamo, ind in j2i.iteritems()}
+        # 0: unknown non-Hangul symbol, 1: unknown Jamo, 2: empty consonant
+        self.jvocab = {jamo: ind+2 for jamo, ind in j2i.iteritems()}
         self.charsCount = chars
         self.cvocab = {char: ind+1 for char, ind in c2i.iteritems()}
         self.wordsCount = words
@@ -61,44 +66,34 @@ class ArcHybridLSTM:
 
         self.blstmFlag = options.blstmFlag
         self.bibiFlag = options.bibiFlag
+        self.noword = options.noword
         self.usechar = options.usechar
-        self.onlyJamo = options.onlyJamo
-        if self.onlyJamo:
-            assert self.usechar
-            assert self.char2jamos
-            self.jdims = self.cdims
+        self.usejamo = options.usejamo
 
-        if self.usechar:
-            cjdims = self.cdims
-            if self.char2jamos and not self.onlyJamo: cjdims += self.jdims
-
-            self.charBuilders = \
-                [LSTMBuilder(1, cjdims, self.cdims, self.model),
-                 LSTMBuilder(1, cjdims, self.cdims, self.model)]
-
+        if self.usechar or self.usejamo:
             self.model.add_lookup_parameters("char-lookup-root",
                                              (1, 2 * self.cdims))
+            inputdim = self.cdims
+            if self.usechar and self.usejamo: inputdim += self.cdims
+            self.charBuilders = \
+                [LSTMBuilder(1, inputdim, self.cdims, self.model),
+                 LSTMBuilder(1, inputdim, self.cdims, self.model)]
 
-            if not self.onlyJamo:  # No need for character embeddings
+            if self.usechar:
                 self.model.add_lookup_parameters("char-lookup",
                                                  (len(chars) + 1, self.cdims))
 
-            if self.char2jamos:  # Will use jamos
-                self.model.add_lookup_parameters("jamo-lookup", (len(jamos) + 1,
-                                                                 self.jdims))
-                # Empty consonant
-                self.model.add_lookup_parameters("jamo-lookup-empty",
-                                                 (1, self.jdims))
-                # Catch-all "Jamo" embedding for non-Hangul symbols.
-                self.model.add_lookup_parameters("jamo-lookup-nonhangul",
-                                                 (1, self.jdims))
+            if self.usejamo:
+                self.model.add_lookup_parameters("jamo-lookup", (len(jamos) + 3,
+                                                                 self.cdims))
                 self.model.add_parameters("jamo-layer",
-                                          (self.jdims, 3 * self.jdims))
-                self.model.add_parameters("jamo-bias", (self.jdims))
+                                          (self.cdims, 3 * self.cdims))
+                self.model.add_parameters("jamo-bias", (self.cdims))
 
-        dims = (2 * self.cdims if self.usechar else 0) + \
-            self.wdims + self.pdims + \
-            (self.edim if self.external_embedding is not None else 0)
+        dims = self.pdims
+        if self.external_embedding:        dims += self.edim
+        if not self.noword:                dims += self.wdims
+        if self.usechar or self.usejamo:   dims += 2 * self.cdims
 
         if self.bibiFlag:
             self.surfaceBuilders = [LSTMBuilder(1, dims, self.ldims * 0.5, self.model),
@@ -120,7 +115,8 @@ class ArcHybridLSTM:
         self.vocab['*INITIAL*'] = 2
         self.pos['*INITIAL*'] = 2
 
-        self.model.add_lookup_parameters("word-lookup", (len(words) + 3, self.wdims))
+        vocab_size = len(words) if not self.noword else 0
+        self.model.add_lookup_parameters("word-lookup", (vocab_size + 3, self.wdims))
         self.model.add_lookup_parameters("pos-lookup", (len(pos) + 3, self.pdims))
         self.model.add_lookup_parameters("rels-lookup", (len(rels), self.rdims))
 
@@ -146,7 +142,6 @@ class ArcHybridLSTM:
 
         self.model.add_parameters("routput-layer", (2 * (len(self.irels) + 0) + 1, self.hidden2_units if self.hidden2_units > 0 else self.hidden_units))
         self.model.add_parameters("routput-bias", (2 * (len(self.irels) + 0) + 1))
-
 
     def __evaluate(self, stack, buf, train):
         topStack = [ stack.roots[-i-1].lstms if len(stack) > i else [self.empty] for i in xrange(self.k) ]
@@ -204,7 +199,7 @@ class ArcHybridLSTM:
         self.word2lstmbias = parameter(self.model["word-to-lstm-bias"])
         self.lstm2lstmbias = parameter(self.model["lstm-to-lstm-bias"])
 
-        if self.usechar and self.char2jamos:
+        if self.usejamo:
             self.jamoLayer = parameter(self.model["jamo-layer"])
             self.jamoBias = parameter(self.model["jamo-bias"])
 
@@ -231,18 +226,33 @@ class ArcHybridLSTM:
         paddingVec = tanh(self.word2lstm * concatenate(filter(None, [paddingWordVec, paddingPosVec, evec])) + self.word2lstmbias )
         self.empty = paddingVec if self.nnvecs == 1 else concatenate([paddingVec for _ in xrange(self.nnvecs)])
 
-    def getJamosEmbedding(self, char, train):
-        if not char in self.char2jamos:  # Must be non-Hangul
-            return lookup(self.model["jamo-lookup-nonhangul"], 0)
+    def keepOrDropJamo(self, jamo, train):
+        jamo_count = float(self.jamosCount.get(jamo, 0))
+        dropFlag = not train or \
+            (random.random() < (jamo_count/(0.25+jamo_count)))
+        # 1: unknown Jamo
+        jamo_index = int(self.jvocab.get(jamo, 1)) if dropFlag else 1
+        return lookup(self.model["jamo-lookup"], jamo_index)
 
-        jamos = self.char2jamos[char]
-        jamo1vec = lookup(self.model["jamo-lookup"], self.jvocab[jamos[0]])
-        jamo2vec = lookup(self.model["jamo-lookup"], self.jvocab[jamos[1]])
-        jamo3vec = lookup(self.model["jamo-lookup"], self.jvocab[jamos[2]]) \
-            if len(jamos) > 2 else lookup(self.model["jamo-lookup-empty"], 0)
-        jamovec = concatenate([ jamo1vec, jamo2vec, jamo3vec ])
+    def getJamoVec(self, char, train):
+        jamos = decompose(char)
 
-        jamovec = self.activation(self.jamoLayer * jamovec + self.jamoBias)
+        if len(jamos) == 1:  # Non-Hangul (ex: @, Q)
+            symbol = jamos[0]
+            symbol_count = float(self.jamosCount.get(symbol, 0))
+            dropFlag = not train or \
+                (random.random() < (symbol_count/(0.25+symbol_count)))
+            # 0: unknown symbol
+            jamo_index = int(self.jvocab.get(symbol, 0)) if dropFlag else 0
+            return lookup(self.model["jamo-lookup"], jamo_index)
+
+        # Hangul character
+        jamo1vec = self.keepOrDropJamo(jamos[0], train)
+        jamo2vec = self.keepOrDropJamo(jamos[1], train)
+        jamo3vec = self.keepOrDropJamo(jamos[2], train) if len(jamos) > 2 else \
+            lookup(self.model["jamo-lookup"], 2)  # 2: empty consonant
+        jamoinput = concatenate([ jamo1vec, jamo2vec, jamo3vec ])
+        jamovec = self.activation(self.jamoLayer * jamoinput + self.jamoBias)
 
         return jamovec
 
@@ -261,33 +271,31 @@ class ArcHybridLSTM:
 
         # Forward
         for char in unicode(word,"utf-8"):
-            charvec = self.getCharVec(char, train) if not self.onlyJamo \
-                else None
-            jamovec = self.getJamosEmbedding(char, train) if self.char2jamos \
-                else None
-            cforward = cforward.add_input(
-                concatenate(filter(None, [charvec, jamovec])) )
+            charvec = self.getCharVec(char, train) if self.usechar else None
+            jamovec = self.getJamoVec(char, train) if self.usejamo else None
+            cinput = concatenate(filter(None, [charvec, jamovec]))
+            cforward = cforward.add_input(cinput)
 
         # Backward
         for char in reversed(unicode(word,"utf-8")):
-            charvec = self.getCharVec(char, train) if not self.onlyJamo \
-                else None
-            jamovec = self.getJamosEmbedding(char, train) if self.char2jamos \
-                else None
-            cbackward = cbackward.add_input(
-                concatenate(filter(None, [charvec, jamovec])) )
+            charvec = self.getCharVec(char, train) if self.usechar else None
+            jamovec = self.getJamoVec(char, train) if self.usejamo else None
+            cinput = concatenate(filter(None, [charvec, jamovec]))
+            cbackward = cbackward.add_input(cinput)
+
+        result = concatenate( [cforward.output(), cbackward.output()] )
 
         return concatenate( [cforward.output(), cbackward.output()] )
-
 
     def getWordEmbeddings(self, sentence, train):
         for root in sentence:
             root.charvec = self.getCharacterEmbedding(root.norm, train) \
-                if self.usechar else None
+                if self.usechar or self.usejamo else None  # 2 * self.cdims
 
             c = float(self.wordsCount.get(root.norm, 0))
             dropFlag =  not train or (random.random() < (c/(0.25+c)))
-            root.wordvec = lookup(self.model["word-lookup"], int(self.vocab.get(root.norm, 0)) if dropFlag else 0)
+            root.wordvec = lookup(self.model["word-lookup"], int(self.vocab.get(root.norm, 0)) if dropFlag else 0) \
+                if not self.noword else None
             root.posvec = lookup(self.model["pos-lookup"], int(self.pos[root.pos])) if self.pdims > 0 else None
 
             if self.external_embedding is not None:
@@ -302,6 +310,13 @@ class ArcHybridLSTM:
             else:
                 root.evec = None
             root.ivec = concatenate(filter(None, [root.charvec, root.wordvec, root.posvec, root.evec]))
+
+            if first_report and root.norm != "*root*":
+                print "+++++++++++++++++++++++"
+                print "Sanity report: word \"{0}\" gets dimension {1} before " \
+                    "LSTMs".format(root.norm, len(root.ivec.vec_value()))
+                print "+++++++++++++++++++++++"
+                disable_first_report()
 
         if self.blstmFlag:
             forward  = self.surfaceBuilders[0].initial_state()
