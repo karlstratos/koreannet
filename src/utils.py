@@ -69,7 +69,7 @@ def vocab(conll_path):
                 if (node.norm == "*root*"): continue  # No morphology there...
                 for char in unicode(node.norm,"utf-8"):
                     jamosCount.update(decompose(char))
-                    chars.append(char.encode('utf-8'))
+                    chars.append(char)
             charsCount.update(chars)
             wordsCount.update([node.norm for node in sentence])
             posCount.update([node.pos for node in sentence])
