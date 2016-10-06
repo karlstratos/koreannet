@@ -63,6 +63,12 @@ class ArcHybridLSTM:
             self.extrnd['*INITIAL*'] = 2
 
             print 'Load external embedding. Vector dimensions', self.edim
+            num_words_covered_training = 0
+            for word in self.wordsCount:
+                if word in self.external_embedding:
+                    num_words_covered_training += 1
+            print '{0}/{1} model vocab have external embeddings'.format(
+                num_words_covered_training, len(self.wordsCount))
 
         self.blstmFlag = options.blstmFlag
         self.bibiFlag = options.bibiFlag
