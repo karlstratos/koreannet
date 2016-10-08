@@ -23,6 +23,7 @@ class ArcHybridLSTM:
 
         self.oracle = options.oracle
         self.ldims = options.lstm_dims * 2
+        self.lcdim = options.lcdim  # output dim of char LSTM
         self.cdims = options.cembedding_dims
         self.wdims = options.wembedding_dims
         self.pdims = options.pembedding_dims
@@ -47,47 +48,19 @@ class ArcHybridLSTM:
 
         self.nnvecs = (1 if self.headFlag else 0) + (2 if self.rlFlag or self.rlMostFlag else 0)
 
-        self.external_embedding = None
-        if options.external_embedding is not None:
-            external_embedding_fp = open(options.external_embedding,'r')
-            external_embedding_fp.readline()
-            self.external_embedding = {line.split(' ')[0] : [float(f) for f in line.strip().split(' ')[1:]] for line in external_embedding_fp}
-            external_embedding_fp.close()
-
-            self.edim = len(self.external_embedding.values()[0])
-            self.noextrn = [0.0 for _ in xrange(self.edim)]
-            self.extrnd = {word: i + 3 for i, word in enumerate(self.external_embedding)}
-            self.model.add_lookup_parameters("extrn-lookup", (len(self.external_embedding) + 3, self.edim))
-            for word, i in self.extrnd.iteritems():
-                self.model["extrn-lookup"].init_row(i, self.external_embedding[word])
-            self.extrnd['*PAD*'] = 1
-            self.extrnd['*INITIAL*'] = 2
-
-            print 'Load external embedding. Vector dimensions', self.edim
-            num_words_covered_training = 0
-            for word in self.wordsCount:
-                if word in self.external_embedding:
-                    num_words_covered_training += 1
-            print '{0}/{1} model vocab have external embeddings'.format(
-                num_words_covered_training, len(self.wordsCount))
-
         self.blstmFlag = options.blstmFlag
         self.bibiFlag = options.bibiFlag
         self.noword = options.noword
         self.usechar = options.usechar
         self.usejamo = options.usejamo
         self.pretrain = options.pretrain
-        self.bottleneck_dim = options.bottleneck_dim
         self.dist = options.dist
 
         if self.usechar or self.usejamo:
-            rootdim = 2 * self.cdims if not self.pretrain else self.edim
-            self.model.add_lookup_parameters("char-lookup-root", (1, rootdim))
+            self.model.add_lookup_parameters("char-lookup-root", (1, self.lcdim))
             inputdim = self.cdims
             if self.usechar and self.usejamo: inputdim += self.cdims
-            self.charBuilders = \
-                [LSTMBuilder(1, inputdim, self.cdims, self.model),
-                 LSTMBuilder(1, inputdim, self.cdims, self.model)]
+            self.charBuilder = LSTMBuilder(1, inputdim, self.lcdim, self.model)
 
             if self.usechar:
                 self.model.add_lookup_parameters("char-lookup",
@@ -100,23 +73,13 @@ class ArcHybridLSTM:
                 self.model.add_parameters("jamo-bias", (self.cdims))
 
         dims = self.pdims  # Input dimension for word-level LSTMs
-        if self.external_embedding:        dims += self.edim
         if not self.noword:                dims += self.wdims
-        if self.usechar or self.usejamo:   dims += 2 * self.cdims
+        if self.usechar or self.usejamo:   dims += self.lcdim
 
         if self.pretrain:  # Learn to reconstruct word vectors with jamo/char
             assert self.noword
             assert self.pdims == 0
             assert self.usechar or self.usejamo
-            dims = self.edim
-
-            # Match emb(word) ~ tanh( W^2 W^1 x + b ) where:
-            #    x = (f, b) output of char/jamo embedding, 2 * cdims
-            self.model.add_parameters("pretrain-layer1",
-                                      (self.bottleneck_dim, 2 * self.cdims))
-            self.model.add_parameters("pretrain-layer2",
-                                      (dims, self.bottleneck_dim))
-            self.model.add_parameters("pretrain-bias", (dims))
 
         if self.bibiFlag:
             self.surfaceBuilders = [LSTMBuilder(1, dims, self.ldims * 0.5, self.model),
@@ -130,7 +93,6 @@ class ArcHybridLSTM:
                 self.surfaceBuilders = [SimpleRNNBuilder(1, dims, self.ldims * 0.5, self.model), LSTMBuilder(1, dims, self.ldims * 0.5, self.model)]
 
         self.hidden_units = options.hidden_units
-        self.hidden2_units = options.hidden2_units
 
         self.vocab['*PAD*'] = 1
         self.pos['*PAD*'] = 1
@@ -143,7 +105,7 @@ class ArcHybridLSTM:
         self.model.add_lookup_parameters("pos-lookup", (len(pos) + 3, self.pdims))
         self.model.add_lookup_parameters("rels-lookup", (len(rels), self.rdims))
 
-        self.model.add_parameters("word-to-lstm", (self.ldims, self.wdims + self.pdims + (self.edim if self.external_embedding is not None else 0)))
+        self.model.add_parameters("word-to-lstm", (self.ldims, self.wdims + self.pdims))
         self.model.add_parameters("word-to-lstm-bias", (self.ldims))
         self.model.add_parameters("lstm-to-lstm", (self.ldims, self.ldims * self.nnvecs + self.rdims))
         self.model.add_parameters("lstm-to-lstm-bias", (self.ldims))
@@ -151,19 +113,13 @@ class ArcHybridLSTM:
         self.model.add_parameters("hidden-layer", (self.hidden_units, self.ldims * self.nnvecs * (self.k + 1)))
         self.model.add_parameters("hidden-bias", (self.hidden_units))
 
-        self.model.add_parameters("hidden2-layer", (self.hidden2_units, self.hidden_units))
-        self.model.add_parameters("hidden2-bias", (self.hidden2_units))
-
-        self.model.add_parameters("output-layer", (3, self.hidden2_units if self.hidden2_units > 0 else self.hidden_units))
+        self.model.add_parameters("output-layer", (3, self.hidden_units))
         self.model.add_parameters("output-bias", (3))
 
         self.model.add_parameters("rhidden-layer", (self.hidden_units, self.ldims * self.nnvecs * (self.k + 1)))
         self.model.add_parameters("rhidden-bias", (self.hidden_units))
 
-        self.model.add_parameters("rhidden2-layer", (self.hidden2_units, self.hidden_units))
-        self.model.add_parameters("rhidden2-bias", (self.hidden2_units))
-
-        self.model.add_parameters("routput-layer", (2 * (len(self.irels) + 0) + 1, self.hidden2_units if self.hidden2_units > 0 else self.hidden_units))
+        self.model.add_parameters("routput-layer", (2 * (len(self.irels) + 0) + 1, self.hidden_units))
         self.model.add_parameters("routput-bias", (2 * (len(self.irels) + 0) + 1))
 
     def __evaluate(self, stack, buf, train):
@@ -172,15 +128,9 @@ class ArcHybridLSTM:
 
         input = concatenate(list(chain(*(topStack + topBuffer))))
 
-        if self.hidden2_units > 0:
-            routput = (self.routLayer * self.activation(self.rhid2Bias + self.rhid2Layer * self.activation(self.rhidLayer * input + self.rhidBias)) + self.routBias)
-        else:
-            routput = (self.routLayer * self.activation(self.rhidLayer * input + self.rhidBias) + self.routBias)
+        routput = (self.routLayer * self.activation(self.rhidLayer * input + self.rhidBias) + self.routBias)
 
-        if self.hidden2_units > 0:
-            output = (self.outLayer * self.activation(self.hid2Bias + self.hid2Layer * self.activation(self.hidLayer * input + self.hidBias)) + self.outBias)
-        else:
-            output = (self.outLayer * self.activation(self.hidLayer * input + self.hidBias) + self.outBias)
+        output = (self.outLayer * self.activation(self.hidLayer * input + self.hidBias) + self.outBias)
 
         scrs, uscrs = routput.value(), output.value()
 
@@ -220,38 +170,28 @@ class ArcHybridLSTM:
             self.jamoLayer = parameter(self.model["jamo-layer"])
             self.jamoBias = parameter(self.model["jamo-bias"])
 
-        if self.pretrain:
-            self.pretrainLayer1 = parameter(self.model["pretrain-layer1"])
-            self.pretrainLayer2 = parameter(self.model["pretrain-layer2"])
-            self.pretrainBias = parameter(self.model["pretrain-bias"])
-
         self.word2lstm = parameter(self.model["word-to-lstm"])
         self.lstm2lstm = parameter(self.model["lstm-to-lstm"])
 
         self.word2lstmbias = parameter(self.model["word-to-lstm-bias"])
         self.lstm2lstmbias = parameter(self.model["lstm-to-lstm-bias"])
 
-        self.hid2Layer = parameter(self.model["hidden2-layer"])
         self.hidLayer = parameter(self.model["hidden-layer"])
         self.outLayer = parameter(self.model["output-layer"])
 
-        self.hid2Bias = parameter(self.model["hidden2-bias"])
         self.hidBias = parameter(self.model["hidden-bias"])
         self.outBias = parameter(self.model["output-bias"])
 
-        self.rhid2Layer = parameter(self.model["rhidden2-layer"])
         self.rhidLayer = parameter(self.model["rhidden-layer"])
         self.routLayer = parameter(self.model["routput-layer"])
 
-        self.rhid2Bias = parameter(self.model["rhidden2-bias"])
         self.rhidBias = parameter(self.model["rhidden-bias"])
         self.routBias = parameter(self.model["routput-bias"])
 
-        evec = lookup(self.model["extrn-lookup"], 1) if self.external_embedding is not None else None
         paddingWordVec = lookup(self.model["word-lookup"], 1)
         paddingPosVec = lookup(self.model["pos-lookup"], 1) if self.pdims > 0 else None
 
-        paddingVec = tanh(self.word2lstm * concatenate(filter(None, [paddingWordVec, paddingPosVec, evec])) + self.word2lstmbias )
+        paddingVec = tanh(self.word2lstm * concatenate(filter(None, [paddingWordVec, paddingPosVec])) + self.word2lstmbias )
         self.empty = paddingVec if self.nnvecs == 1 else concatenate([paddingVec for _ in xrange(self.nnvecs)])
 
     def keepOrDropJamo(self, jamo, train):
@@ -296,8 +236,7 @@ class ArcHybridLSTM:
     def getCharacterEmbedding(self, word, train):
         if word == "*root*": return lookup(self.model["char-lookup-root"], 0)
 
-        cforward  = self.charBuilders[0].initial_state()
-        cbackward = self.charBuilders[1].initial_state()
+        cforward  = self.charBuilder.initial_state()
 
         # Forward
         for char in unicode(word,"utf-8"):
@@ -306,20 +245,7 @@ class ArcHybridLSTM:
             cinput = concatenate(filter(None, [charvec, jamovec]))
             cforward = cforward.add_input(cinput)
 
-        # Backward
-        for char in reversed(unicode(word,"utf-8")):
-            charvec = self.getCharVec(char, train) if self.usechar else None
-            jamovec = self.getJamoVec(char, train) if self.usejamo else None
-            cinput = concatenate(filter(None, [charvec, jamovec]))
-            cbackward = cbackward.add_input(cinput)
-
-        result = concatenate( [cforward.output(), cbackward.output()] )
-
-        if self.pretrain:
-            result2 = self.activation(self.pretrainLayer2 *
-                                      self.pretrainLayer1 * result +
-                                      self.pretrainBias)
-            result = result2
+        result = cforward.output()
 
         return result
 
@@ -335,21 +261,7 @@ class ArcHybridLSTM:
         posvec = lookup(self.model["pos-lookup"], int(self.pos[pos])) \
             if self.pdims > 0 else None
 
-        if (not self.pretrain) and self.external_embedding:
-            if not dropFlag and random.random() < 0.5:
-                evec = lookup(self.model["extrn-lookup"], 0)
-            elif form in self.external_embedding:
-                evec = lookup(self.model["extrn-lookup"],
-                                   self.extrnd[form], update = True)
-            elif word in self.external_embedding:
-                evec = lookup(self.model["extrn-lookup"],
-                                   self.extrnd[word], update = True)
-            else:
-                evec = lookup(self.model["extrn-lookup"], 0)
-        else:
-            evec = None
-
-        result = concatenate(filter(None, [charvec, wordvec, posvec, evec]))
+        result = concatenate(filter(None, [charvec, wordvec, posvec]))
 
         return result
 
@@ -446,13 +358,12 @@ class ArcHybridLSTM:
                 renew_cg()
                 yield [sentence[-1]] + sentence[:-1]
 
-    def Pretrain(self, num_epochs):
-        assert self.external_embedding
+    def Pretrain(self, external_embedding, num_epochs):
         renew_cg()
         self.Init()
 
         # Augment char/jamo vocab.
-        for word in self.external_embedding:
+        for word in external_embedding:
             for char in unicode(word, "utf-8"):
                 if self.usechar and not char in self.cvocab:
                     print 'Adding new char in embeddings:', char
@@ -473,16 +384,14 @@ class ArcHybridLSTM:
 
         trainer = AdamTrainer(self.model)
 
-        print 'Pretrain with {0} word embeddings'.format(
-            len(self.external_embedding))
         errs = []
         for epoch in xrange(num_epochs):
             print 'Pretraining epoch', epoch,
             total_loss = 0.0
-            for word in self.external_embedding:
+            for word in external_embedding:
                 # gold: target embedding
-                gold = vecInput(self.edim)
-                gold.set(self.external_embedding[word])
+                gold = vecInput(self.wdims)
+                gold.set(external_embedding[word])
 
                 # pred: char/jamo construction
                 pred = self.getCharacterEmbedding(word, True)
@@ -509,7 +418,7 @@ class ArcHybridLSTM:
                     renew_cg()
                     self.Init()
 
-            print "Loss: ", total_loss / len(self.external_embedding)
+            print "Loss: ", total_loss / len(external_embedding)
             total_loss = 0.0
             trainer.update_epoch()
 

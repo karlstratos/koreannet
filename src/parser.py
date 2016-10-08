@@ -11,19 +11,19 @@ if __name__ == '__main__':
     parser.add_option("--extrn", dest="external_embedding", help="External embeddings", metavar="FILE")
     parser.add_option("--model", dest="model", help="Load/Save model file", metavar="FILE", default="barchybrid.model")
     parser.add_option("--cembedding", type="int", dest="cembedding_dims", default=25)
-    parser.add_option("--wembedding", type="int", dest="wembedding_dims", default=100)
+    parser.add_option("--wembedding", type="int", dest="wembedding_dims", default=50)
     parser.add_option("--pembedding", type="int", dest="pembedding_dims", default=25)
     parser.add_option("--rembedding", type="int", dest="rembedding_dims", default=25)
-    parser.add_option("--epochs", type="int", dest="epochs", default=30)
+    parser.add_option("--epochs", type="int", default=30)
     parser.add_option("--pepochs", type="int", default=10)
-    parser.add_option("--hidden", type="int", dest="hidden_units", default=100)
-    parser.add_option("--hidden2", type="int", dest="hidden2_units", default=0)
+    parser.add_option("--hidden", type="int", dest="hidden_units", default=50)
     parser.add_option("--k", type="int", dest="window", default=3)
     parser.add_option("--lr", type="float", dest="learning_rate", default=0.1)
     parser.add_option("--outdir", type="string", dest="output", default="results")
-    parser.add_option("--activation", type="string", dest="activation", default="tanh")
+    parser.add_option("--activation", type="string", dest="activation", default="relu")
     parser.add_option("--lstmlayers", type="int", dest="lstm_layers", default=2)
-    parser.add_option("--lstmdims", type="int", dest="lstm_dims", default=200)
+    parser.add_option("--lstmdims", type="int", dest="lstm_dims", default=50)
+    parser.add_option("--lcdim", type="int", dest="lcdim", default=50)
     parser.add_option("--cnn-seed", type="int", dest="seed", default=7)
     parser.add_option("--disableoracle", action="store_false", dest="oracle", default=True)
     parser.add_option("--disableblstm", action="store_false", dest="blstmFlag", default=True)
@@ -33,7 +33,6 @@ if __name__ == '__main__':
     parser.add_option("--usejamo", action="store_true", default=False)
     parser.add_option("--pretrain", action="store_true", default=False)
     parser.add_option("--dist", type="int", default=2)
-    parser.add_option("--bottle", type="int", dest="bottleneck_dim", default=20)
     parser.add_option("--usehead", action="store_true", dest="headFlag", default=False)
     parser.add_option("--userlmost", action="store_true", dest="rlFlag", default=False)
     parser.add_option("--userl", action="store_true", dest="rlMostFlag", default=False)
@@ -41,47 +40,53 @@ if __name__ == '__main__':
     parser.add_option("--cnn-mem", type="int", dest="cnn_mem", default=512)
 
     (options, args) = parser.parse_args()
-    print 'Using external embedding:', options.external_embedding
 
     if not options.predictFlag:
         if not (options.rlFlag or options.rlMostFlag or options.headFlag):
             print 'You must use either --userlmost or --userl or --usehead (you can use multiple)'
             sys.exit()
 
-        print 'Preparing vocab'
         jamos, j2i, chars, c2i, words, w2i, pos, rels = utils.vocab(options.conll_train)
 
         print '----------------------------'
-        print len(rels), 'relations'
-        print len(pos), 'POS tags'
-        print len(words), 'words'
-        print len(chars), 'characters'
-        print len(jamos), 'jamos:',
-        for (jamo,_) in sorted(jamos.items(), key=lambda x: int(x[1]), reverse=True):
-            print jamo, '('+str(jamos[jamo])+'), ',
-        print
+        print len(words), 'wtypes,', len(chars), 'ctypes,', len(jamos), 'jtypes'
         print 'Use word?', not options.noword
         print 'Use char?', options.usechar
         print 'Use jamo?', options.usejamo
-        print 'Pretrain?', options.pretrain
-        print 'distance norm:', options.dist
-        print 'bottleneck dim:', options.bottleneck_dim
         print 'word dim:', options.wembedding_dims
         print 'char dim:', options.cembedding_dims
         print 'pos dim:', options.pembedding_dims
         print '----------------------------'
 
+        external_embedding = {}
+        if options.external_embedding is not None:
+            with open(options.external_embedding,'r') as external_embedding_fp:
+                external_embedding = {line.split(' ')[0] : [float(f) for f in line.strip().split(' ')[1:]] for line in external_embedding_fp}
+            assert options.wembedding_dims ==  len(external_embedding.values()[0])
+            print '{0} external embeddings'.format(len(external_embedding))
+            for word in external_embedding:
+                if not word in words:
+                    words[word] = 1
+                    new_w = len(w2i)
+                    w2i[word] = new_w
+
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
             pickle.dump((jamos, j2i, chars, c2i, words, w2i, pos,
                          rels, options), paramsfp)
-        print 'Finished collecting vocab'
 
         print 'Initializing blstm arc hybrid:'
         parser = ArcHybridLSTM(words, pos, rels, w2i, jamos, j2i, chars, c2i,
                                options)
 
+        if external_embedding and not options.noword:
+            print 'Initializing parameters with word embeddings'
+            for word in external_embedding:
+                w = w2i[word]
+                parser.model["word-lookup"].init_row(w, external_embedding[word])
+
         if options.pretrain:
-            parser.Pretrain(options.pepochs)
+            assert options.lcdim == options.wembedding_dims
+            parser.Pretrain(external_embedding, options.pepochs)
 
         for epoch in xrange(options.epochs):
             print 'Starting epoch', epoch
@@ -95,8 +100,6 @@ if __name__ == '__main__':
         with open(options.params, 'r') as paramsfp:
             jamos, j2i, chars, c2i, words, w2i, pos, \
                 rels, stored_opt = pickle.load(paramsfp)
-
-        #stored_opt.external_embedding = options.external_embedding
 
         parser = ArcHybridLSTM(words, pos, rels, w2i, jamos, j2i, chars, c2i,
                                stored_opt)
