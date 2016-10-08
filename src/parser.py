@@ -15,6 +15,7 @@ if __name__ == '__main__':
     parser.add_option("--pembedding", type="int", dest="pembedding_dims", default=25)
     parser.add_option("--rembedding", type="int", dest="rembedding_dims", default=25)
     parser.add_option("--epochs", type="int", dest="epochs", default=30)
+    parser.add_option("--pepochs", type="int", default=10)
     parser.add_option("--hidden", type="int", dest="hidden_units", default=100)
     parser.add_option("--hidden2", type="int", dest="hidden2_units", default=0)
     parser.add_option("--k", type="int", dest="window", default=3)
@@ -30,6 +31,9 @@ if __name__ == '__main__':
     parser.add_option("--noword", action="store_true", default=False)
     parser.add_option("--usechar", action="store_true", default=False)
     parser.add_option("--usejamo", action="store_true", default=False)
+    parser.add_option("--pretrain", action="store_true", default=False)
+    parser.add_option("--dist", type="int", default=2)
+    parser.add_option("--bottle", type="int", dest="bottleneck_dim", default=20)
     parser.add_option("--usehead", action="store_true", dest="headFlag", default=False)
     parser.add_option("--userlmost", action="store_true", dest="rlFlag", default=False)
     parser.add_option("--userl", action="store_true", dest="rlMostFlag", default=False)
@@ -59,6 +63,9 @@ if __name__ == '__main__':
         print 'Use word?', not options.noword
         print 'Use char?', options.usechar
         print 'Use jamo?', options.usejamo
+        print 'Pretrain?', options.pretrain
+        print 'distance norm:', options.dist
+        print 'bottleneck dim:', options.bottleneck_dim
         print 'word dim:', options.wembedding_dims
         print 'char dim:', options.cembedding_dims
         print 'pos dim:', options.pembedding_dims
@@ -73,6 +80,9 @@ if __name__ == '__main__':
         parser = ArcHybridLSTM(words, pos, rels, w2i, jamos, j2i, chars, c2i,
                                options)
 
+        if options.pretrain:
+            parser.Pretrain(options.pepochs)
+
         for epoch in xrange(options.epochs):
             print 'Starting epoch', epoch
             parser.Train(options.conll_train)
@@ -86,7 +96,7 @@ if __name__ == '__main__':
             jamos, j2i, chars, c2i, words, w2i, pos, \
                 rels, stored_opt = pickle.load(paramsfp)
 
-        stored_opt.external_embedding = options.external_embedding
+        #stored_opt.external_embedding = options.external_embedding
 
         parser = ArcHybridLSTM(words, pos, rels, w2i, jamos, j2i, chars, c2i,
                                stored_opt)

@@ -6,11 +6,11 @@ import utils, time, random
 import numpy as np
 from jamo import decompose
 
-first_report = True
+FIRST_REPORT = True
 
 def disable_first_report():
-    global first_report
-    first_report = False
+    global FIRST_REPORT
+    FIRST_REPORT = False
 
 class ArcHybridLSTM:
     def __init__(self, words, pos, rels, w2i, jamos, j2i, chars, c2i, options):
@@ -31,6 +31,7 @@ class ArcHybridLSTM:
         self.jamosCount = jamos
         # 0: unknown non-Hangul symbol, 1: unknown Jamo, 2: empty consonant
         self.jvocab = {jamo: ind+2 for jamo, ind in j2i.iteritems()}
+        self.jamo_cache = {}
         self.charsCount = chars
         self.cvocab = {char: ind+1 for char, ind in c2i.iteritems()}
         self.wordsCount = words
@@ -75,10 +76,13 @@ class ArcHybridLSTM:
         self.noword = options.noword
         self.usechar = options.usechar
         self.usejamo = options.usejamo
+        self.pretrain = options.pretrain
+        self.bottleneck_dim = options.bottleneck_dim
+        self.dist = options.dist
 
         if self.usechar or self.usejamo:
-            self.model.add_lookup_parameters("char-lookup-root",
-                                             (1, 2 * self.cdims))
+            rootdim = 2 * self.cdims if not self.pretrain else self.edim
+            self.model.add_lookup_parameters("char-lookup-root", (1, rootdim))
             inputdim = self.cdims
             if self.usechar and self.usejamo: inputdim += self.cdims
             self.charBuilders = \
@@ -88,7 +92,6 @@ class ArcHybridLSTM:
             if self.usechar:
                 self.model.add_lookup_parameters("char-lookup",
                                                  (len(chars) + 1, self.cdims))
-
             if self.usejamo:
                 self.model.add_lookup_parameters("jamo-lookup", (len(jamos) + 3,
                                                                  self.cdims))
@@ -96,10 +99,24 @@ class ArcHybridLSTM:
                                           (self.cdims, 3 * self.cdims))
                 self.model.add_parameters("jamo-bias", (self.cdims))
 
-        dims = self.pdims
+        dims = self.pdims  # Input dimension for word-level LSTMs
         if self.external_embedding:        dims += self.edim
         if not self.noword:                dims += self.wdims
         if self.usechar or self.usejamo:   dims += 2 * self.cdims
+
+        if self.pretrain:  # Learn to reconstruct word vectors with jamo/char
+            assert self.noword
+            assert self.pdims == 0
+            assert self.usechar or self.usejamo
+            dims = self.edim
+
+            # Match emb(word) ~ tanh( W^2 W^1 x + b ) where:
+            #    x = (f, b) output of char/jamo embedding, 2 * cdims
+            self.model.add_parameters("pretrain-layer1",
+                                      (self.bottleneck_dim, 2 * self.cdims))
+            self.model.add_parameters("pretrain-layer2",
+                                      (dims, self.bottleneck_dim))
+            self.model.add_parameters("pretrain-bias", (dims))
 
         if self.bibiFlag:
             self.surfaceBuilders = [LSTMBuilder(1, dims, self.ldims * 0.5, self.model),
@@ -199,15 +216,20 @@ class ArcHybridLSTM:
         self.model.load(filename)
 
     def Init(self):
+        if self.usejamo:
+            self.jamoLayer = parameter(self.model["jamo-layer"])
+            self.jamoBias = parameter(self.model["jamo-bias"])
+
+        if self.pretrain:
+            self.pretrainLayer1 = parameter(self.model["pretrain-layer1"])
+            self.pretrainLayer2 = parameter(self.model["pretrain-layer2"])
+            self.pretrainBias = parameter(self.model["pretrain-bias"])
+
         self.word2lstm = parameter(self.model["word-to-lstm"])
         self.lstm2lstm = parameter(self.model["lstm-to-lstm"])
 
         self.word2lstmbias = parameter(self.model["word-to-lstm-bias"])
         self.lstm2lstmbias = parameter(self.model["lstm-to-lstm-bias"])
-
-        if self.usejamo:
-            self.jamoLayer = parameter(self.model["jamo-layer"])
-            self.jamoBias = parameter(self.model["jamo-bias"])
 
         self.hid2Layer = parameter(self.model["hidden2-layer"])
         self.hidLayer = parameter(self.model["hidden-layer"])
@@ -241,7 +263,9 @@ class ArcHybridLSTM:
         return lookup(self.model["jamo-lookup"], jamo_index)
 
     def getJamoVec(self, char, train):
-        jamos = decompose(char)
+        if not char in self.jamo_cache:
+            self.jamo_cache[char] = decompose(char)
+        jamos = self.jamo_cache[char]
 
         if len(jamos) == 1:  # Non-Hangul (ex: @, Q)
             symbol = jamos[0]
@@ -291,33 +315,50 @@ class ArcHybridLSTM:
 
         result = concatenate( [cforward.output(), cbackward.output()] )
 
-        return concatenate( [cforward.output(), cbackward.output()] )
+        if self.pretrain:
+            result2 = self.activation(self.pretrainLayer2 *
+                                      self.pretrainLayer1 * result +
+                                      self.pretrainBias)
+            result = result2
+
+        return result
+
+    def getInitialWordEmbedding(self, word, pos, form, train):
+        charvec = self.getCharacterEmbedding(word, train) \
+            if self.usechar or self.usejamo else None  # 2 * self.cdims
+
+        c = float(self.wordsCount.get(word, 0))
+        dropFlag =  not train or (random.random() < (c/(0.25+c)))
+        wordvec = None if self.noword else \
+            lookup(self.model["word-lookup"], int(self.vocab.get(word, 0))
+                   if dropFlag else 0)
+        posvec = lookup(self.model["pos-lookup"], int(self.pos[pos])) \
+            if self.pdims > 0 else None
+
+        if (not self.pretrain) and self.external_embedding:
+            if not dropFlag and random.random() < 0.5:
+                evec = lookup(self.model["extrn-lookup"], 0)
+            elif form in self.external_embedding:
+                evec = lookup(self.model["extrn-lookup"],
+                                   self.extrnd[form], update = True)
+            elif word in self.external_embedding:
+                evec = lookup(self.model["extrn-lookup"],
+                                   self.extrnd[word], update = True)
+            else:
+                evec = lookup(self.model["extrn-lookup"], 0)
+        else:
+            evec = None
+
+        result = concatenate(filter(None, [charvec, wordvec, posvec, evec]))
+
+        return result
 
     def getWordEmbeddings(self, sentence, train):
         for root in sentence:
-            root.charvec = self.getCharacterEmbedding(root.norm, train) \
-                if self.usechar or self.usejamo else None  # 2 * self.cdims
+            root.ivec = self.getInitialWordEmbedding(root.norm, root.pos,
+                                                     root.form, train)
 
-            c = float(self.wordsCount.get(root.norm, 0))
-            dropFlag =  not train or (random.random() < (c/(0.25+c)))
-            root.wordvec = lookup(self.model["word-lookup"], int(self.vocab.get(root.norm, 0)) if dropFlag else 0) \
-                if not self.noword else None
-            root.posvec = lookup(self.model["pos-lookup"], int(self.pos[root.pos])) if self.pdims > 0 else None
-
-            if self.external_embedding is not None:
-                if not dropFlag and random.random() < 0.5:
-                    root.evec = lookup(self.model["extrn-lookup"], 0)
-                elif root.form in self.external_embedding:
-                    root.evec = lookup(self.model["extrn-lookup"], self.extrnd[root.form], update = True)
-                elif root.norm in self.external_embedding:
-                    root.evec = lookup(self.model["extrn-lookup"], self.extrnd[root.norm], update = True)
-                else:
-                    root.evec = lookup(self.model["extrn-lookup"], 0)
-            else:
-                root.evec = None
-            root.ivec = concatenate(filter(None, [root.charvec, root.wordvec, root.posvec, root.evec]))
-
-            if first_report and root.norm != "*root*":
+            if FIRST_REPORT and root.norm != "*root*":
                 print "+++++++++++++++++++++++"
                 print "Sanity report: word \"{0}\" gets dimension {1} before " \
                     "LSTMs".format(root.norm, len(root.ivec.vec_value()))
@@ -352,7 +393,6 @@ class ArcHybridLSTM:
             for root in sentence:
                 root.ivec = (self.word2lstm * root.ivec) + self.word2lstmbias
                 root.vec = tanh( root.ivec )
-
 
     def Predict(self, conll_path):
         with open(conll_path, 'r') as conllFP:
@@ -406,6 +446,72 @@ class ArcHybridLSTM:
                 renew_cg()
                 yield [sentence[-1]] + sentence[:-1]
 
+    def Pretrain(self, num_epochs):
+        assert self.external_embedding
+        renew_cg()
+        self.Init()
+
+        # Augment char/jamo vocab.
+        for word in self.external_embedding:
+            for char in unicode(word, "utf-8"):
+                if self.usechar and not char in self.cvocab:
+                    print 'Adding new char in embeddings:', char
+                    new_c = len(self.cvocab)
+                    self.cvocab[char] = new_c
+                    self.charsCount[char] = 1
+
+                if not char in self.jamo_cache:
+                    self.jamo_cache[char] = decompose(char)
+                jamos = self.jamo_cache[char]
+
+                for jamo in jamos:
+                    if self.usejamo and not jamo in self.jvocab:
+                        print 'Adding new jamo in embeddings:', jamo
+                        new_j = len(self.jvocab)
+                        self.jvocab[jamo] = new_j
+                        self.jamosCount[jamo] = 1
+
+        trainer = AdamTrainer(self.model)
+
+        print 'Pretrain with {0} word embeddings'.format(
+            len(self.external_embedding))
+        errs = []
+        for epoch in xrange(num_epochs):
+            print 'Pretraining epoch', epoch,
+            total_loss = 0.0
+            for word in self.external_embedding:
+                # gold: target embedding
+                gold = vecInput(self.edim)
+                gold.set(self.external_embedding[word])
+
+                # pred: char/jamo construction
+                pred = self.getCharacterEmbedding(word, True)
+
+                # |gold - pred|
+                if self.dist == 2:  # L2 norm
+                    err = squared_distance(gold, pred)
+                elif self.dist == 1:  # L1 norm
+                    err = l1_distance(gold, pred)
+                else:  # Linf norm
+                    assert False
+                    err = 0
+
+                errs.append(err)
+                total_loss += err.scalar_value()
+
+                if len(errs) > 50:
+                    eerrs = esum(errs)
+                    eerrs.scalar_value()
+                    eerrs.backward()
+                    trainer.update()
+                    errs = []
+
+                    renew_cg()
+                    self.Init()
+
+            print "Loss: ", total_loss / len(self.external_embedding)
+            total_loss = 0.0
+            trainer.update_epoch()
 
     def Train(self, conll_path):
         mloss = 0.0
