@@ -76,11 +76,6 @@ class ArcHybridLSTM:
         if not self.noword:                dims += self.wdims
         if self.usechar or self.usejamo:   dims += self.lcdim
 
-        if self.pretrain:  # Learn to reconstruct word vectors with jamo/char
-            assert self.noword
-            assert self.pdims == 0
-            assert self.usechar or self.usejamo
-
         if self.bibiFlag:
             self.surfaceBuilders = [LSTMBuilder(1, dims, self.ldims * 0.5, self.model),
                                     LSTMBuilder(1, dims, self.ldims * 0.5, self.model)]
@@ -359,52 +354,27 @@ class ArcHybridLSTM:
 
     def Pretrain(self, external_embedding, num_epochs):
         renew_cg()
-
-        # Augment char/jamo vocab.
-        for word in external_embedding:
-            for char in unicode(word, "utf-8"):
-                if self.usechar and not char in self.cvocab:
-                    print 'Adding new char in embeddings:', char
-                    new_c = len(self.cvocab)
-                    self.cvocab[char] = new_c
-                    self.charsCount[char] = 1
-
-                if not char in self.jamo_cache:
-                    self.jamo_cache[char] = decompose(char)
-                jamos = self.jamo_cache[char]
-
-                for jamo in jamos:
-                    if self.usejamo and not jamo in self.jvocab:
-                        print 'Adding new jamo in embeddings:', jamo
-                        new_j = len(self.jvocab)
-                        self.jvocab[jamo] = new_j
-                        self.jamosCount[jamo] = 1
-
         trainer = AdamTrainer(self.model)
-
         errs = []
         for epoch in xrange(num_epochs):
             print 'Pretraining epoch', epoch,
             total_loss = 0.0
-            for word in external_embedding:
-                # gold: target embedding
+            for wnum, word in enumerate(external_embedding):
                 gold = vecInput(self.wdims)
                 gold.set(external_embedding[word])
-
-                # pred: char/jamo construction
                 pred = self.getCharacterEmbedding(word, True)
 
-                # |gold - pred|
                 if self.dist == 2:  # L2 norm
                     err = squared_distance(gold, pred)
                 elif self.dist == 1:  # L1 norm
                     err = l1_distance(gold, pred)
-                else:  # Linf norm
+                else:  # others
                     assert False
-                    err = 0
+                    err = None
 
                 errs.append(err)
-                total_loss += err.scalar_value()
+                loss = err.scalar_value()
+                total_loss += loss
 
                 if len(errs) > 50:
                     eerrs = esum(errs)
@@ -412,7 +382,6 @@ class ArcHybridLSTM:
                     eerrs.backward()
                     trainer.update()
                     errs = []
-
                     renew_cg()
 
             print "Loss: ", total_loss / len(external_embedding)

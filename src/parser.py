@@ -1,5 +1,6 @@
 from optparse import OptionParser
 from arc_hybrid import ArcHybridLSTM
+from jamo import decompose
 import pickle, utils, os, time, sys
 
 
@@ -65,11 +66,30 @@ if __name__ == '__main__':
                 external_embedding = {line.split(' ')[0] : [float(f) for f in line.strip().split(' ')[1:]] for line in external_embedding_fp}
             assert options.wembedding_dims ==  len(external_embedding.values()[0])
             print '{0} external embeddings'.format(len(external_embedding))
-            for word in external_embedding:
+            num_new_words = 0
+            num_new_chars = 0
+            num_new_jamos = 0
+            for word in external_embedding:  # expand word vocab
                 if not word in words:
+                    num_new_words += 1
                     words[word] = 1
                     new_w = len(w2i)
                     w2i[word] = new_w
+
+                for char in unicode(word, "utf-8"):  # expand char vocab
+                    if not char in chars:
+                        num_new_chars += 1
+                        chars[char] = 1
+                        new_c = len(c2i)
+                        c2i[char] = new_c
+
+                    for jamo in decompose(char):  # expand jamo vocab
+                        if not jamo in jamos:
+                            num_new_jamos += 1
+                            jamos[jamo] = 1
+                            new_j = len(j2i)
+                            j2i[jamo] = new_j
+            print 'Have {0} new words, {1} new chars, {2} new jamos from pretrained embeddings'.format(num_new_words, num_new_chars, num_new_jamos)
 
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
             pickle.dump((jamos, j2i, chars, c2i, words, w2i, pos,
@@ -86,6 +106,7 @@ if __name__ == '__main__':
                 parser.model["word-lookup"].init_row(w, external_embedding[word])
 
         if options.pretrain:
+            assert options.usechar or options.usejamo
             assert options.lcdim == options.wembedding_dims
             parser.Pretrain(external_embedding, options.pepochs)
 
