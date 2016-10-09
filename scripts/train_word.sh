@@ -2,12 +2,12 @@
 MAIN=src/parser.py
 SEED=123456789
 MEM=512
-OUTDIR=tmp/parser-orig
+OUTDIR=tmp/parser-word
 TRAIN=data/ko-universal-train.conll.shuffled
 DEV=data/ko-universal-dev.conll
 EPOCHS=30
-LSTMDIM=125
-LSTMLAYERS=2
+LSTMDIM=50
+LSTMLAYERS=1
 
 mkdir -p $OUTDIR
 
@@ -24,4 +24,5 @@ python $MAIN \
     --bibi-lstm \
     --k 3 \
     --usehead \
-    --userl
+    --userl \
+    --pembedding 0
