@@ -166,10 +166,6 @@ class ArcHybridLSTM:
         self.model.load(filename)
 
     def Init(self):
-        if self.usejamo:
-            self.jamoLayer = parameter(self.model["jamo-layer"])
-            self.jamoBias = parameter(self.model["jamo-bias"])
-
         self.word2lstm = parameter(self.model["word-to-lstm"])
         self.lstm2lstm = parameter(self.model["lstm-to-lstm"])
 
@@ -222,7 +218,10 @@ class ArcHybridLSTM:
         jamo3vec = self.keepOrDropJamo(jamos[2], train) if len(jamos) > 2 else \
             lookup(self.model["jamo-lookup"], 2)  # 2: empty consonant
         jamoinput = concatenate([ jamo1vec, jamo2vec, jamo3vec ])
-        jamovec = self.activation(self.jamoLayer * jamoinput + self.jamoBias)
+
+        jamoLayer = parameter(self.model["jamo-layer"])
+        jamoBias = parameter(self.model["jamo-bias"])
+        jamovec = self.activation(jamoLayer * jamoinput + jamoBias)
 
         return jamovec
 
@@ -360,7 +359,6 @@ class ArcHybridLSTM:
 
     def Pretrain(self, external_embedding, num_epochs):
         renew_cg()
-        self.Init()
 
         # Augment char/jamo vocab.
         for word in external_embedding:
@@ -416,7 +414,6 @@ class ArcHybridLSTM:
                     errs = []
 
                     renew_cg()
-                    self.Init()
 
             print "Loss: ", total_loss / len(external_embedding)
             total_loss = 0.0

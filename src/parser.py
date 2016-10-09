@@ -2,6 +2,7 @@ from optparse import OptionParser
 from arc_hybrid import ArcHybridLSTM
 import pickle, utils, os, time, sys
 
+
 if __name__ == '__main__':
     parser = OptionParser()
     parser.add_option("--train", dest="conll_train", help="Annotated CONLL train file", metavar="FILE", default="../data/PTB_SD_3_3_0/train.conll")
@@ -81,7 +82,7 @@ if __name__ == '__main__':
         if external_embedding and not options.noword:
             print 'Initializing parameters with word embeddings'
             for word in external_embedding:
-                w = w2i[word]
+                w = parser.vocab[word]  # DON'T use w2i, use parser.vocab!
                 parser.model["word-lookup"].init_row(w, external_embedding[word])
 
         if options.pretrain:
