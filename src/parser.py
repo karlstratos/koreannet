@@ -35,7 +35,7 @@ if __name__ == '__main__':
     parser.add_option("--usejamo", action="store_true", default=False)
     parser.add_option("--pretrain", action="store_true", default=False)
     parser.add_option("--pretrainpred", metavar="FILE", default=None)
-    parser.add_option("--dist", type="int", default=2)
+    parser.add_option("--dist", type="string", default="l2")
     parser.add_option("--usehead", action="store_true", dest="headFlag", default=False)
     parser.add_option("--userlmost", action="store_true", dest="rlFlag", default=False)
     parser.add_option("--userl", action="store_true", dest="rlMostFlag", default=False)

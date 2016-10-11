@@ -5,6 +5,7 @@ from itertools import chain
 import utils, time, random
 import numpy as np
 from jamo import decompose
+from math import sqrt
 
 FIRST_REPORT = True
 
@@ -364,13 +365,35 @@ class ArcHybridLSTM:
                 gold.set(external_embedding[word])
                 pred = self.getCharacterEmbedding(word, True)
 
-                if self.dist == 2:  # L2 norm
-                    err = squared_distance(gold, pred)
-                elif self.dist == 1:  # L1 norm
+                if self.dist == "l1":  # L1 norm
                     err = l1_distance(gold, pred)
-                else:  # others
+                    #diff = gold - pred
+                    #err = esum([emax([pick(diff,i), -pick(diff,i)]) for i in xrange(self.wdims)])
+
+                elif self.dist == "l2":  # L2 norm
+                    err = squared_distance(gold, pred)
+                    #diff = gold - pred
+                    #sqdiff = cwise_multiply(diff, diff)
+                    #err = esum([pick(sqdiff,i) for i in xrange(self.wdims)])
+
+                elif self.dist == "inf":  # Linf norm
+                    diff = gold - pred
+                    err = emax([emax([pick(diff,i), -pick(diff,i)]) for i in xrange(self.wdims)])
+
+                elif self.dist == "cos":  # NEGATIVE cosine similarity
+                    sqgold = cwise_multiply(gold, gold)
+                    gold_norm = scalarInput(sqrt(esum([pick(sqgold,i) for i in xrange(self.wdims)]).value()))
+                    gold_unit = cdiv(gold, concatenate([gold_norm for i in xrange(self.wdims)]))
+
+                    sqpred = cwise_multiply(pred, pred)
+                    pred_norm = scalarInput(sqrt(esum([pick(sqpred,i) for i in xrange(self.wdims)]).value()))
+                    pred_unit = cdiv(pred, concatenate([pred_norm for i in xrange(self.wdims)]))
+
+                    err = -dot_product(gold_unit, pred_unit)
+
+                else:
+                    print 'unknown dist:', self.dist
                     assert False
-                    err = None
 
                 errs.append(err)
                 loss = err.scalar_value()
