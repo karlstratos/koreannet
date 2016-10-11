@@ -17,7 +17,7 @@ if __name__ == '__main__':
     parser.add_option("--pembedding", type="int", dest="pembedding_dims", default=25)
     parser.add_option("--rembedding", type="int", dest="rembedding_dims", default=25)
     parser.add_option("--epochs", type="int", default=30)
-    parser.add_option("--pepochs", type="int", default=30)
+    parser.add_option("--pepochs", type="int", default=10)
     parser.add_option("--hidden", type="int", dest="hidden_units", default=50)
     parser.add_option("--k", type="int", dest="window", default=3)
     parser.add_option("--lr", type="float", dest="learning_rate", default=0.1)
@@ -34,6 +34,7 @@ if __name__ == '__main__':
     parser.add_option("--usechar", action="store_true", default=False)
     parser.add_option("--usejamo", action="store_true", default=False)
     parser.add_option("--pretrain", action="store_true", default=False)
+    parser.add_option("--pretrainpred", metavar="FILE", default=None)
     parser.add_option("--dist", type="int", default=2)
     parser.add_option("--usehead", action="store_true", dest="headFlag", default=False)
     parser.add_option("--userlmost", action="store_true", dest="rlFlag", default=False)
@@ -58,6 +59,7 @@ if __name__ == '__main__':
         print 'word dim:', options.wembedding_dims
         print 'char dim:', options.cembedding_dims
         print 'pos dim:', options.pembedding_dims
+        print 'lcdim:', options.lcdim
         print '----------------------------'
 
         external_embedding = {}
@@ -108,7 +110,7 @@ if __name__ == '__main__':
         if options.pretrain:
             assert options.usechar or options.usejamo
             assert options.lcdim == options.wembedding_dims
-            parser.Pretrain(external_embedding, options.pepochs)
+            parser.Pretrain(external_embedding, options.pepochs, options.pretrainpred)
 
         for epoch in xrange(options.epochs):
             print 'Starting epoch', epoch

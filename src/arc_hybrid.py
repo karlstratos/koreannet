@@ -352,14 +352,14 @@ class ArcHybridLSTM:
                 renew_cg()
                 yield [sentence[-1]] + sentence[:-1]
 
-    def Pretrain(self, external_embedding, num_epochs):
+    def Pretrain(self, external_embedding, num_epochs, pred_file=None):
         renew_cg()
         trainer = AdamTrainer(self.model)
         errs = []
         for epoch in xrange(num_epochs):
             print 'Pretraining epoch', epoch,
             total_loss = 0.0
-            for wnum, word in enumerate(external_embedding):
+            for word in external_embedding:
                 gold = vecInput(self.wdims)
                 gold.set(external_embedding[word])
                 pred = self.getCharacterEmbedding(word, True)
@@ -387,6 +387,16 @@ class ArcHybridLSTM:
             print "Loss: ", total_loss / len(external_embedding)
             total_loss = 0.0
             trainer.update_epoch()
+
+        if pred_file:
+            predf = open(pred_file, 'w')
+            for word in external_embedding:
+                renew_cg()
+                pred = self.getCharacterEmbedding(word, False).vec_value()
+                predf.write(word)
+                for v in pred: predf.write(' '+str(v))
+                predf.write('\n')
+            predf.close()
 
     def Train(self, conll_path):
         mloss = 0.0

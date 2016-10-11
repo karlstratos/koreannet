@@ -1,7 +1,6 @@
+# Modifier: Karl Stratos (me@karlstratos.com)
+# I ported https://github.com/JDongian/python-jamo from Python 3 to Python 2.
 """
-(Karl Stratos: I ported https://github.com/JDongian/python-jamo from Python 3
-to Python 2.)
-
 Syllable and jamo analysis for Korean. Default internal exchange form is
 Hangul characters, not codepoints. Jamo exchange form is U+11xx characters,
 not U+3xxx Hangul Compatibility Jamo (HCJ) characters or codepoints.
