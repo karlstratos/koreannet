@@ -6,6 +6,7 @@ import utils, time, random
 import numpy as np
 from jamo import decompose
 from math import sqrt
+import os
 
 FIRST_REPORT = True
 
@@ -56,6 +57,7 @@ class ArcHybridLSTM:
         self.usejamo = options.usejamo
         self.pretrain = options.pretrain
         self.dist = options.dist
+        self.outdir = options.output
 
         if self.usechar or self.usejamo:
             self.model.add_lookup_parameters("char-lookup-root", (1, self.lcdim))
@@ -353,7 +355,15 @@ class ArcHybridLSTM:
                 renew_cg()
                 yield [sentence[-1]] + sentence[:-1]
 
-    def Pretrain(self, external_embedding, num_epochs, pred_file=None):
+    def Pretrain(self, external_embedding, num_epochs):
+        with open(os.path.join(self.outdir, 'pretrain-initial'), 'w') as predf:
+            for word in external_embedding:
+                renew_cg()
+                pred = self.getCharacterEmbedding(word, False).vec_value()
+                predf.write(word)
+                for v in pred: predf.write(' '+str(v))
+                predf.write('\n')
+
         renew_cg()
         trainer = AdamTrainer(self.model)
         errs = []
@@ -411,15 +421,13 @@ class ArcHybridLSTM:
             total_loss = 0.0
             trainer.update_epoch()
 
-        if pred_file:
-            predf = open(pred_file, 'w')
+        with open(os.path.join(self.outdir, 'pretrain-final'), 'w') as predf:
             for word in external_embedding:
                 renew_cg()
                 pred = self.getCharacterEmbedding(word, False).vec_value()
                 predf.write(word)
                 for v in pred: predf.write(' '+str(v))
                 predf.write('\n')
-            predf.close()
 
     def Train(self, conll_path):
         mloss = 0.0

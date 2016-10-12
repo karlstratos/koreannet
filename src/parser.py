@@ -34,7 +34,6 @@ if __name__ == '__main__':
     parser.add_option("--usechar", action="store_true", default=False)
     parser.add_option("--usejamo", action="store_true", default=False)
     parser.add_option("--pretrain", action="store_true", default=False)
-    parser.add_option("--pretrainpred", metavar="FILE", default=None)
     parser.add_option("--dist", type="string", default="l2")
     parser.add_option("--usehead", action="store_true", dest="headFlag", default=False)
     parser.add_option("--userlmost", action="store_true", dest="rlFlag", default=False)
@@ -60,6 +59,7 @@ if __name__ == '__main__':
         print 'char dim:', options.cembedding_dims
         print 'pos dim:', options.pembedding_dims
         print 'lcdim:', options.lcdim
+        if options.pretrain: print 'Pretraining loss:', options.dist
         print '----------------------------'
 
         external_embedding = {}
@@ -110,7 +110,7 @@ if __name__ == '__main__':
         if options.pretrain:
             assert options.usechar or options.usejamo
             assert options.lcdim == options.wembedding_dims
-            parser.Pretrain(external_embedding, options.pepochs, options.pretrainpred)
+            parser.Pretrain(external_embedding, options.pepochs)
 
         for epoch in xrange(options.epochs):
             print 'Starting epoch', epoch
