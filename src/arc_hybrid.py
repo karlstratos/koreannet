@@ -56,6 +56,7 @@ class ArcHybridLSTM:
         self.usechar = options.usechar
         self.usejamo = options.usejamo
         self.pretrain = options.pretrain
+        self.fbchar = options.fbchar
         self.dist = options.dist
         self.outdir = options.output
 
@@ -66,14 +67,16 @@ class ArcHybridLSTM:
             self.charBuilder = LSTMBuilder(1, inputdim, self.lcdim, self.model)
 
             if self.usechar:
-                self.model.add_lookup_parameters("char-lookup",
-                                                 (len(chars) + 1, self.cdims))
+                self.model.add_lookup_parameters("char-lookup", (len(chars) + 1, self.cdims))
             if self.usejamo:
-                self.model.add_lookup_parameters("jamo-lookup", (len(jamos) + 3,
-                                                                 self.cdims))
-                self.model.add_parameters("jamo-layer",
-                                          (self.cdims, 3 * self.cdims))
+                self.model.add_lookup_parameters("jamo-lookup", (len(jamos) + 3, self.cdims))
+                self.model.add_parameters("jamo-layer", (self.cdims, 3 * self.cdims))
                 self.model.add_parameters("jamo-bias", (self.cdims))
+
+            if self.fbchar:
+                self.charBuilderBack = LSTMBuilder(1, inputdim, self.lcdim, self.model)
+                self.model.add_parameters("fbchar-layer", (self.lcdim, 2 * self.lcdim))
+                self.model.add_parameters("fbchar-bias", (self.lcdim))
 
         dims = self.pdims  # Input dimension for word-level LSTMs
         if not self.noword:                dims += self.wdims
@@ -242,7 +245,22 @@ class ArcHybridLSTM:
             cinput = concatenate(filter(None, [charvec, jamovec]))
             cforward = cforward.add_input(cinput)
 
-        result = cforward.output()
+        if self.fbchar:
+            cbackward  = self.charBuilderBack.initial_state()
+            fbcharLayer = parameter(self.model["fbchar-layer"])
+            fbcharBias = parameter(self.model["fbchar-bias"])
+
+            # Backward
+            for char in reversed(unicode(word,"utf-8")):
+                charvec = self.getCharVec(char, train) if self.usechar else None
+                jamovec = self.getJamoVec(char, train) if self.usejamo else None
+                cinput = concatenate(filter(None, [charvec, jamovec]))
+                cbackward = cbackward.add_input(cinput)
+
+            fb = concatenate([cforward.output(), cbackward.output()])
+            result = fbcharLayer * fb + fbcharBias
+        else:
+            result = cforward.output()
 
         return result
 
