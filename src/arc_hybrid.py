@@ -57,6 +57,7 @@ class ArcHybridLSTM:
         self.usejamo = options.usejamo
         self.pretrain = options.pretrain
         self.fbchar = options.fbchar
+        self.highway = options.highway
         self.dist = options.dist
         self.outdir = options.output
 
@@ -77,6 +78,10 @@ class ArcHybridLSTM:
                 self.charBuilderBack = LSTMBuilder(1, inputdim, self.lcdim, self.model)
                 self.model.add_parameters("fbchar-layer", (self.lcdim, 2 * self.lcdim))
                 self.model.add_parameters("fbchar-bias", (self.lcdim))
+                if self.highway:
+                    self.model.add_parameters("highway-layer", (self.lcdim, 2 * self.lcdim))
+                    self.model.add_parameters("highway-bias", (self.lcdim))
+
 
         dims = self.pdims  # Input dimension for word-level LSTMs
         if not self.noword:                dims += self.wdims
@@ -246,11 +251,8 @@ class ArcHybridLSTM:
             cforward = cforward.add_input(cinput)
 
         if self.fbchar:
-            cbackward  = self.charBuilderBack.initial_state()
-            fbcharLayer = parameter(self.model["fbchar-layer"])
-            fbcharBias = parameter(self.model["fbchar-bias"])
-
             # Backward
+            cbackward  = self.charBuilderBack.initial_state()
             for char in reversed(unicode(word,"utf-8")):
                 charvec = self.getCharVec(char, train) if self.usechar else None
                 jamovec = self.getJamoVec(char, train) if self.usejamo else None
@@ -258,7 +260,19 @@ class ArcHybridLSTM:
                 cbackward = cbackward.add_input(cinput)
 
             fb = concatenate([cforward.output(), cbackward.output()])
-            result = fbcharLayer * fb + fbcharBias
+            fbcharLayer = parameter(self.model["fbchar-layer"])
+            fbcharBias = parameter(self.model["fbchar-bias"])
+            result0 = fbcharLayer * fb + fbcharBias
+            result1 = self.activation(result0)
+            if self.highway:
+                highwayLayer = parameter(self.model["highway-layer"])
+                highwayBias = parameter(self.model["highway-bias"])
+                mask = logistic(highwayLayer * fb + highwayBias)
+                ones = concatenate([scalarInput(1.0) for _ in range(self.lcdim)])
+                result = cwise_multiply(mask, result1) + cwise_multiply(ones - mask, result0)
+            else:
+                result = result1
+
         else:
             result = cforward.output()
 

@@ -35,6 +35,7 @@ if __name__ == '__main__':
     parser.add_option("--usejamo", action="store_true", default=False)
     parser.add_option("--pretrain", action="store_true", default=False)
     parser.add_option("--fbchar", action="store_true", default=False)
+    parser.add_option("--highway", action="store_true", default=False)
     parser.add_option("--dist", type="string", default="l2")
     parser.add_option("--usehead", action="store_true", dest="headFlag", default=False)
     parser.add_option("--userlmost", action="store_true", dest="rlFlag", default=False)
