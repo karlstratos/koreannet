@@ -94,6 +94,8 @@ if __name__ == '__main__':
                             j2i[jamo] = new_j
             print 'Have {0} new words, {1} new chars, {2} new jamos from pretrained embeddings'.format(num_new_words, num_new_chars, num_new_jamos)
 
+        if not os.path.exists(options.output): os.makedirs(options.output)  # Make directory if needed
+
         with open(os.path.join(options.output, options.params), 'w') as paramsfp:
             pickle.dump((jamos, j2i, chars, c2i, words, w2i, pos,
                          rels, options), paramsfp)
@@ -120,7 +122,7 @@ if __name__ == '__main__':
             utils.write_conll(devpath, parser.Predict(options.conll_dev))
             os.system('perl src/utils/eval.pl -g ' + options.conll_dev + ' -s ' + devpath  + ' > ' + devpath + '.txt &')
             print 'Finished predicting dev'
-            parser.Save(os.path.join(options.output, options.model + str(epoch+1)))
+            parser.Save(os.path.join(options.output, "model" + str(epoch+1)))
     else:
         with open(options.params, 'r') as paramsfp:
             jamos, j2i, chars, c2i, words, w2i, pos, \
