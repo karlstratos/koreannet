@@ -26,7 +26,7 @@ if __name__ == '__main__':
     parser.add_option("--lstmlayers", type="int", dest="lstm_layers", default=2)
     parser.add_option("--lstmdims", type="int", dest="lstm_dims", default=50)
     parser.add_option("--lcdim", type="int", dest="lcdim", default=50)
-    parser.add_option("--cnn-seed", type="int", dest="seed", default=7)
+    parser.add_option("--dynet-seed", type="int", dest="seed", default=7)
     parser.add_option("--disableoracle", action="store_false", dest="oracle", default=True)
     parser.add_option("--disableblstm", action="store_false", dest="blstmFlag", default=True)
     parser.add_option("--bibi-lstm", action="store_true", dest="bibiFlag", default=True)
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     parser.add_option("--userlmost", action="store_true", dest="rlFlag", default=False)
     parser.add_option("--userl", action="store_true", dest="rlMostFlag", default=False)
     parser.add_option("--predict", action="store_true", dest="predictFlag", default=False)
-    parser.add_option("--cnn-mem", type="int", dest="cnn_mem", default=512)
+    parser.add_option("--dynet-mem", type="int", dest="dynet_mem", default=512)
 
     (options, args) = parser.parse_args()
 
@@ -109,7 +109,7 @@ if __name__ == '__main__':
             print 'Initializing parameters with word embeddings'
             for word in external_embedding:
                 w = parser.vocab[word]  # DON'T use w2i, use parser.vocab!
-                parser.model["word-lookup"].init_row(w, external_embedding[word])
+                parser.wlookup.init_row(w, external_embedding[word])
 
         if options.pretrain:
             assert options.usechar or options.usejamo
@@ -129,6 +129,9 @@ if __name__ == '__main__':
             jamos, j2i, chars, c2i, words, w2i, pos, \
                 rels, stored_opt = pickle.load(paramsfp)
 
+        print '# words: ', len(w2i)
+        print '# chars: ', len(c2i)
+        print '# jamos: ', len(j2i)
         parser = ArcHybridLSTM(words, pos, rels, w2i, jamos, j2i, chars, c2i,
                                stored_opt)
         parser.Load(options.model)

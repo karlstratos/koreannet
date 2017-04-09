@@ -1,4 +1,4 @@
-from pycnn import *
+from dynet import *
 from utils import ParseForest, read_conll, write_conll
 from operator import itemgetter
 from itertools import chain
@@ -62,25 +62,27 @@ class ArcHybridLSTM:
         self.outdir = options.output
 
         if self.usechar or self.usejamo:
-            self.model.add_lookup_parameters("char-lookup-root", (1, self.lcdim))
+            self.charLookupRoot = self.model.add_lookup_parameters((1, self.lcdim))
             inputdim = self.cdims
             if self.usechar and self.usejamo: inputdim += self.cdims
-            self.charBuilder = LSTMBuilder(1, inputdim, self.lcdim, self.model)
+            self.charBuilder = VanillaLSTMBuilder(1, inputdim, self.lcdim, self.model)
 
             if self.usechar:
-                self.model.add_lookup_parameters("char-lookup", (len(chars) + 1, self.cdims))
+                self.charLookup = self.model.add_lookup_parameters((len(chars) + 1, self.cdims))
+
             if self.usejamo:
-                self.model.add_lookup_parameters("jamo-lookup", (len(jamos) + 3, self.cdims))
-                self.model.add_parameters("jamo-layer", (self.cdims, 3 * self.cdims))
-                self.model.add_parameters("jamo-bias", (self.cdims))
+                self.jamoLookup = self.model.add_lookup_parameters((len(jamos) + 3, self.cdims))
+                self.jamoLayer = self.model.add_parameters((self.cdims, 3 * self.cdims))
+                self.jamoBias = self.model.add_parameters((self.cdims))
 
             if self.fbchar:
-                self.charBuilderBack = LSTMBuilder(1, inputdim, self.lcdim, self.model)
-                self.model.add_parameters("fbchar-layer", (self.lcdim, 2 * self.lcdim))
-                self.model.add_parameters("fbchar-bias", (self.lcdim))
+                self.charBuilderBack = VanillaLSTMBuilder(1, inputdim, self.lcdim, self.model)
+                self.fbcharLayer = self.model.add_parameters((self.lcdim, 2 * self.lcdim))
+                self.fbcharBias = self.model.add_parameters((self.lcdim))
+
                 if self.highway:
-                    self.model.add_parameters("highway-layer", (self.lcdim, 2 * self.lcdim))
-                    self.model.add_parameters("highway-bias", (self.lcdim))
+                    self.highwayLayer = self.model.add_parameters((self.lcdim, 2 * self.lcdim))
+                    self.highwayBias = self.model.add_parameters((self.lcdim))
 
 
         dims = self.pdims  # Input dimension for word-level LSTMs
@@ -88,15 +90,15 @@ class ArcHybridLSTM:
         if self.usechar or self.usejamo:   dims += self.lcdim
 
         if self.bibiFlag:
-            self.surfaceBuilders = [LSTMBuilder(1, dims, self.ldims * 0.5, self.model),
-                                    LSTMBuilder(1, dims, self.ldims * 0.5, self.model)]
-            self.bsurfaceBuilders = [LSTMBuilder(1, self.ldims, self.ldims * 0.5, self.model),
-                                     LSTMBuilder(1, self.ldims, self.ldims * 0.5, self.model)]
+            self.surfaceBuilders = [VanillaLSTMBuilder(1, dims, self.ldims * 0.5, self.model),
+                                    VanillaLSTMBuilder(1, dims, self.ldims * 0.5, self.model)]
+            self.bsurfaceBuilders = [VanillaLSTMBuilder(1, self.ldims, self.ldims * 0.5, self.model),
+                                     VanillaLSTMBuilder(1, self.ldims, self.ldims * 0.5, self.model)]
         elif self.blstmFlag:
             if self.layers > 0:
-                self.surfaceBuilders = [LSTMBuilder(self.layers, dims, self.ldims * 0.5, self.model), LSTMBuilder(self.layers, dims, self.ldims * 0.5, self.model)]
+                self.surfaceBuilders = [VanillaLSTMBuilder(self.layers, dims, self.ldims * 0.5, self.model), VanillaLSTMBuilder(self.layers, dims, self.ldims * 0.5, self.model)]
             else:
-                self.surfaceBuilders = [SimpleRNNBuilder(1, dims, self.ldims * 0.5, self.model), LSTMBuilder(1, dims, self.ldims * 0.5, self.model)]
+                self.surfaceBuilders = [SimpleRNNBuilder(1, dims, self.ldims * 0.5, self.model), VanillaLSTMBuilder(1, dims, self.ldims * 0.5, self.model)]
 
         self.hidden_units = options.hidden_units
 
@@ -107,26 +109,27 @@ class ArcHybridLSTM:
         self.pos['*INITIAL*'] = 2
 
         vocab_size = len(words) if not self.noword else 0
-        self.model.add_lookup_parameters("word-lookup", (vocab_size + 3, self.wdims))
-        self.model.add_lookup_parameters("pos-lookup", (len(pos) + 3, self.pdims))
-        self.model.add_lookup_parameters("rels-lookup", (len(rels), self.rdims))
+        self.wlookup = self.model.add_lookup_parameters((len(words) + 3, self.wdims))
+        self.plookup = self.model.add_lookup_parameters((len(pos) + 3, self.pdims))
+        self.rlookup = self.model.add_lookup_parameters((len(rels), self.rdims))
 
-        self.model.add_parameters("word-to-lstm", (self.ldims, self.wdims + self.pdims))
-        self.model.add_parameters("word-to-lstm-bias", (self.ldims))
-        self.model.add_parameters("lstm-to-lstm", (self.ldims, self.ldims * self.nnvecs + self.rdims))
-        self.model.add_parameters("lstm-to-lstm-bias", (self.ldims))
+        self.word2lstm = self.model.add_parameters((self.ldims, self.wdims + self.pdims))
+        self.word2lstmbias = self.model.add_parameters((self.ldims))
+        self.lstm2lstm = self.model.add_parameters((self.ldims, self.ldims * self.nnvecs + self.rdims))
+        self.lstm2lstmbias = self.model.add_parameters((self.ldims))
 
-        self.model.add_parameters("hidden-layer", (self.hidden_units, self.ldims * self.nnvecs * (self.k + 1)))
-        self.model.add_parameters("hidden-bias", (self.hidden_units))
+        self.hidLayer = self.model.add_parameters((self.hidden_units, self.ldims * self.nnvecs * (self.k + 1)))
+        self.hidBias = self.model.add_parameters((self.hidden_units))
 
-        self.model.add_parameters("output-layer", (3, self.hidden_units))
-        self.model.add_parameters("output-bias", (3))
 
-        self.model.add_parameters("rhidden-layer", (self.hidden_units, self.ldims * self.nnvecs * (self.k + 1)))
-        self.model.add_parameters("rhidden-bias", (self.hidden_units))
+        self.outLayer = self.model.add_parameters((3, self.hidden_units))
+        self.outBias = self.model.add_parameters((3))
 
-        self.model.add_parameters("routput-layer", (2 * (len(self.irels) + 0) + 1, self.hidden_units))
-        self.model.add_parameters("routput-bias", (2 * (len(self.irels) + 0) + 1))
+        self.rhidLayer = self.model.add_parameters((self.hidden_units, self.ldims * self.nnvecs * (self.k + 1)))
+        self.rhidBias = self.model.add_parameters((self.hidden_units))
+
+        self.routLayer = self.model.add_parameters((2 * (len(self.irels) + 0) + 1, self.hidden_units))
+        self.routBias = self.model.add_parameters((2 * (len(self.irels) + 0) + 1))
 
     def __evaluate(self, stack, buf, train):
         topStack = [ stack.roots[-i-1].lstms if len(stack) > i else [self.empty] for i in xrange(self.k) ]
@@ -134,9 +137,8 @@ class ArcHybridLSTM:
 
         input = concatenate(list(chain(*(topStack + topBuffer))))
 
-        routput = (self.routLayer * self.activation(self.rhidLayer * input + self.rhidBias) + self.routBias)
-
-        output = (self.outLayer * self.activation(self.hidLayer * input + self.hidBias) + self.outBias)
+        routput = (self.routLayer.expr() * self.activation(self.rhidLayer.expr() * input + self.rhidBias.expr()) + self.routBias.expr())
+        output = (self.outLayer.expr() * self.activation(self.hidLayer.expr() * input + self.hidBias.expr()) + self.outBias.expr())
 
         scrs, uscrs = routput.value(), output.value()
 
@@ -172,28 +174,9 @@ class ArcHybridLSTM:
         self.model.load(filename)
 
     def Init(self):
-        self.word2lstm = parameter(self.model["word-to-lstm"])
-        self.lstm2lstm = parameter(self.model["lstm-to-lstm"])
-
-        self.word2lstmbias = parameter(self.model["word-to-lstm-bias"])
-        self.lstm2lstmbias = parameter(self.model["lstm-to-lstm-bias"])
-
-        self.hidLayer = parameter(self.model["hidden-layer"])
-        self.outLayer = parameter(self.model["output-layer"])
-
-        self.hidBias = parameter(self.model["hidden-bias"])
-        self.outBias = parameter(self.model["output-bias"])
-
-        self.rhidLayer = parameter(self.model["rhidden-layer"])
-        self.routLayer = parameter(self.model["routput-layer"])
-
-        self.rhidBias = parameter(self.model["rhidden-bias"])
-        self.routBias = parameter(self.model["routput-bias"])
-
-        paddingWordVec = lookup(self.model["word-lookup"], 1)
-        paddingPosVec = lookup(self.model["pos-lookup"], 1) if self.pdims > 0 else None
-
-        paddingVec = tanh(self.word2lstm * concatenate(filter(None, [paddingWordVec, paddingPosVec])) + self.word2lstmbias )
+        paddingWordVec = self.wlookup[1]
+        paddingPosVec = self.plookup[1] if self.pdims > 0 else None
+        paddingVec = tanh(self.word2lstm.expr() * concatenate(filter(None, [paddingWordVec, paddingPosVec])) + self.word2lstmbias.expr() )
         self.empty = paddingVec if self.nnvecs == 1 else concatenate([paddingVec for _ in xrange(self.nnvecs)])
 
     def keepOrDropJamo(self, jamo, train):
@@ -202,7 +185,7 @@ class ArcHybridLSTM:
             (random.random() < (jamo_count/(0.25+jamo_count)))
         # 1: unknown Jamo
         jamo_index = int(self.jvocab.get(jamo, 1)) if dropFlag else 1
-        return lookup(self.model["jamo-lookup"], jamo_index)
+        return self.jamoLookup[jamo_index]
 
     def getJamoVec(self, char, train):
         if not char in self.jamo_cache:
@@ -216,18 +199,15 @@ class ArcHybridLSTM:
                 (random.random() < (symbol_count/(0.25+symbol_count)))
             # 0: unknown symbol
             jamo_index = int(self.jvocab.get(symbol, 0)) if dropFlag else 0
-            return lookup(self.model["jamo-lookup"], jamo_index)
+            return self.jamoLookup[jamo_index]
 
         # Hangul character
         jamo1vec = self.keepOrDropJamo(jamos[0], train)
         jamo2vec = self.keepOrDropJamo(jamos[1], train)
         jamo3vec = self.keepOrDropJamo(jamos[2], train) if len(jamos) > 2 else \
-            lookup(self.model["jamo-lookup"], 2)  # 2: empty consonant
+            self.jamoLookup[2]  # 2: empty consonant
         jamoinput = concatenate([ jamo1vec, jamo2vec, jamo3vec ])
-
-        jamoLayer = parameter(self.model["jamo-layer"])
-        jamoBias = parameter(self.model["jamo-bias"])
-        jamovec = self.activation(jamoLayer * jamoinput + jamoBias)
+        jamovec = self.activation(self.jamoLayer.expr() * jamoinput + self.jamoBias.expr())
 
         return jamovec
 
@@ -236,10 +216,10 @@ class ArcHybridLSTM:
         dropFlag = not train or \
             (random.random() < (char_count/(0.25+char_count)))
         char_index = int(self.cvocab.get(char, 0)) if dropFlag else 0
-        return lookup(self.model["char-lookup"], char_index)
+        return self.charLookup[char_index]
 
     def getCharacterEmbedding(self, word, train):
-        if word == "*root*": return lookup(self.model["char-lookup-root"], 0)
+        if word == "*root*": return self.charLookupRoot[0]
 
         cforward  = self.charBuilder.initial_state()
 
@@ -260,14 +240,10 @@ class ArcHybridLSTM:
                 cbackward = cbackward.add_input(cinput)
 
             fb = concatenate([cforward.output(), cbackward.output()])
-            fbcharLayer = parameter(self.model["fbchar-layer"])
-            fbcharBias = parameter(self.model["fbchar-bias"])
-            result0 = fbcharLayer * fb + fbcharBias
+            result0 = self.fbcharLayer.expr() * fb + self.fbcharBias.expr()
             result1 = self.activation(result0)
             if self.highway:
-                highwayLayer = parameter(self.model["highway-layer"])
-                highwayBias = parameter(self.model["highway-bias"])
-                mask = logistic(highwayLayer * fb + highwayBias)
+                mask = logistic(self.highwayLayer.expr() * fb + self.highwayBias.expr())
                 ones = concatenate([scalarInput(1.0) for _ in range(self.lcdim)])
                 result = cwise_multiply(mask, result1) + cwise_multiply(ones - mask, result0)
             else:
@@ -285,10 +261,8 @@ class ArcHybridLSTM:
         c = float(self.wordsCount.get(word, 0))
         dropFlag =  not train or (random.random() < (c/(0.25+c)))
         wordvec = None if self.noword else \
-            lookup(self.model["word-lookup"], int(self.vocab.get(word, 0))
-                   if dropFlag else 0)
-        posvec = lookup(self.model["pos-lookup"], int(self.pos[pos])) \
-            if self.pdims > 0 else None
+            self.wlookup[int(self.vocab.get(word, 0)) if dropFlag else 0]
+        posvec = self.plookup[int(self.pos[pos])] if self.pdims > 0 else None
 
         result = concatenate(filter(None, [charvec, wordvec, posvec]))
 
@@ -332,7 +306,7 @@ class ArcHybridLSTM:
 
         else:
             for root in sentence:
-                root.ivec = (self.word2lstm * root.ivec) + self.word2lstmbias
+                root.ivec = (self.word2lstm.expr() * root.ivec) + self.word2lstmbias.expr()
                 root.vec = tanh( root.ivec )
 
     def Predict(self, conll_path):
