@@ -1,21 +1,28 @@
+python src/parser.py --dynet-seed 123456789 --dynet-mem 1000 --outdir ../scratch/word
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/word-char --usechar
+python src/parser.py --dynet-seed 123456789 --dynet-mem 3000 --outdir ../scratch/word-char-jamo --usechar --usejamo
+python src/parser.py --dynet-seed 123456789 --dynet-mem 3000 --outdir ../scratch/word-char-jamo-highway --usechar --usejamo --highway
 
-# Testing
-python src/parser.py --predict --outdir /tmp/orig_nopos --model /tmp/orig_nopos/themodel25 --test data/ko-universal-test.conll --params /tmp/orig_nopos/params.pickle
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/word-emb --extrn ../data/emb100.ko
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/word-emb-char --extrn ../data/emb100.ko --usechar
+python src/parser.py --dynet-seed 123456789 --dynet-mem 3000 --outdir ../scratch/word-emb-char-jamo --extrn ../data/emb100.ko --usechar --usejamo
+python src/parser.py --dynet-seed 123456789 --dynet-mem 3000 --outdir ../scratch/word-emb-char-jamo-highway --extrn ../data/emb100.ko --usechar --usejamo --highway
+
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/char --noword --usechar --cembedding 100
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/jamo --noword --usejamo --cembedding 100
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/char-jamo --noword --usechar --usejamo --cembedding 100
+
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/char-highway --noword --usechar --cembedding 100 --highway
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/jamo-highway --noword --usejamo --cembedding 100 --highway
+python src/parser.py --dynet-seed 123456789 --dynet-mem 2000 --outdir ../scratch/char-jamo-highway --noword --usechar --usejamo --cembedding 100 --highway
 
 
+python src/parser.py --dynet-seed 123456789 --dynet-mem 4000 --outdir ../scratch/char200-highway --noword --usechar --cembedding 200 --highway
+python src/parser.py --dynet-seed 123456789 --dynet-mem 4000 --outdir ../scratch/jamo200-highway --noword --usejamo --cembedding 200 --highway
+python src/parser.py --dynet-seed 123456789 --dynet-mem 4000 --outdir ../scratch/char200-jamo200-highway --noword --usechar --usejamo --cembedding 200 --highway
+python src/parser.py --dynet-seed 123456789 --dynet-mem 6000 --outdir ../scratch/word-emb-char100-jamo100-highway --extrn ../data/emb100.ko --usechar --usejamo --cembedding 100 --highway
 
+python src/parser.py --predict --model ../scratch/word/model25 --outdir ../scratch/word
 
-# Word (without POS embeddings)
-python src/parser.py --dynet-mem 2000 --dynet-seed 123456789 --outdir /tmp/orig_nopos --model /tmp/orig_nopos/themodel --train data/ko-universal-train.conll.shuffled --dev data/ko-universal-dev.conll --epochs 30 --lstmdims 125 --lstmlayers 2 --bibi-lstm --k 3 --usehead --userl --pembedding 0
-
-# Word + Char (without POS embeddings)
-python src/parser.py --dynet-mem 2000 --dynet-seed 123456789 --outdir /tmp/origchar_nopos --model /tmp/origchar_nopos/themodel --train data/ko-universal-train.conll.shuffled --dev data/ko-universal-dev.conll --epochs 30 --lstmdims 125 --lstmlayers 2 --bibi-lstm --k 3 --usehead --userl --pembedding 0 --usechar --cembedding 25
-
-# Word + Char + Jamo (without POS embeddings)
-python src/parser.py --dynet-mem 2000 --dynet-seed 123456789 --outdir /tmp/origcharjamo_nopos --model /tmp/origcharjamo_nopos/themodel --train data/ko-universal-train.conll.shuffled --dev data/ko-universal-dev.conll --epochs 30 --lstmdims 125 --lstmlayers 2 --bibi-lstm --k 3 --usehead --userl --pembedding 0 --usechar --cembedding 25 --usejamo
-
-# Char (without POS embeddings)
-python src/parser.py --dynet-mem 4000 --dynet-seed 123456789 --outdir /tmp/char_nopos --model /tmp/char_nopos/themodel --train data/ko-universal-train.conll.shuffled --dev data/ko-universal-dev.conll --epochs 30 --lstmdims 125 --lstmlayers 2 --bibi-lstm --k 3 --usehead --userl --pembedding 0 --noword --cembedding 50 --usechar
-
-# Jamo (without POS embeddings)
-python src/parser.py --dynet-mem 4000 --dynet-seed 123456789 --outdir /tmp/jamo_nopos --model /tmp/jamo_nopos/themodel --train data/ko-universal-train.conll.shuffled --dev data/ko-universal-dev.conll --epochs 30 --lstmdims 125 --lstmlayers 2 --bibi-lstm --k 3 --usehead --userl --pembedding 0 --noword --cembedding 50 --usejamo
+# Quick
+python src/parser.py ../scratch/quick --train ../data/ko-universal-train.conll.shuffled.small --dev ../data/ko-universal-train.conll.shuffled.small --test ../data/ko-universal-train.conll.shuffled.small --epochs 3 --lstmdims 50

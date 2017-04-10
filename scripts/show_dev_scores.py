@@ -10,18 +10,18 @@ for root, dirs, filenames in os.walk(sys.argv[1]):
             epoch = int(re.findall(r'\d+', filename)[0])
             epoch_filename[epoch] = os.path.join(root, filename)
 
-max_UAS = 0.0
+max_LAS = 0.0
 bets_epoch = 0
 for epoch in sorted(epoch_filename):
     with open(epoch_filename[epoch], 'r') as infile:
         lines = infile.readlines()
         UAS = lines[1].split()[-2]
         LAS = lines[0].split()[-2]
-        print UAS+'\t'+LAS
+        print str(epoch) + '\t' + UAS+'\t'+LAS
 
-        UAS = float(UAS)
-        if UAS > max_UAS:
-            max_UAS = UAS
+        LAS = float(LAS)
+        if LAS > max_LAS:
+            max_LAS = LAS
             best_epoch = epoch
 
-print 'max UAS', max_UAS, 'at epoch', best_epoch
+print 'max LAS', max_LAS, 'at epoch', best_epoch

@@ -20,12 +20,11 @@ class ArcHybridLSTM:
         self.trainer = AdamTrainer(self.model)
         random.seed(1)
 
-        self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify, 'tanh3': (lambda x: tanh(cwise_multiply(cwise_multiply(x, x), x)))}
+        self.activations = {'tanh': tanh, 'sigmoid': logistic, 'relu': rectify, 'tanh3': (lambda x: tanh(cmult(cmult(x, x), x)))}
         self.activation = self.activations[options.activation]
 
         self.oracle = options.oracle
         self.ldims = options.lstm_dims * 2
-        self.lcdim = options.lcdim  # output dim of char LSTM
         self.cdims = options.cembedding_dims
         self.wdims = options.wembedding_dims
         self.pdims = options.pembedding_dims
@@ -56,16 +55,18 @@ class ArcHybridLSTM:
         self.usechar = options.usechar
         self.usejamo = options.usejamo
         self.pretrain = options.pretrain
-        self.fbchar = options.fbchar
         self.highway = options.highway
         self.dist = options.dist
         self.outdir = options.output
 
         if self.usechar or self.usejamo:
-            self.charLookupRoot = self.model.add_lookup_parameters((1, self.lcdim))
+            self.charLookupRoot = self.model.add_lookup_parameters((1, self.cdims))
             inputdim = self.cdims
             if self.usechar and self.usejamo: inputdim += self.cdims
-            self.charBuilder = VanillaLSTMBuilder(1, inputdim, self.lcdim, self.model)
+            self.charBuilder = VanillaLSTMBuilder(1, inputdim, self.cdims, self.model)
+            self.charBuilderBack = VanillaLSTMBuilder(1, inputdim, self.cdims, self.model)
+            self.fbcharLayer = self.model.add_parameters((self.cdims, 2 * self.cdims))
+            self.fbcharBias = self.model.add_parameters((self.cdims))
 
             if self.usechar:
                 self.charLookup = self.model.add_lookup_parameters((len(chars) + 1, self.cdims))
@@ -75,19 +76,14 @@ class ArcHybridLSTM:
                 self.jamoLayer = self.model.add_parameters((self.cdims, 3 * self.cdims))
                 self.jamoBias = self.model.add_parameters((self.cdims))
 
-            if self.fbchar:
-                self.charBuilderBack = VanillaLSTMBuilder(1, inputdim, self.lcdim, self.model)
-                self.fbcharLayer = self.model.add_parameters((self.lcdim, 2 * self.lcdim))
-                self.fbcharBias = self.model.add_parameters((self.lcdim))
-
-                if self.highway:
-                    self.highwayLayer = self.model.add_parameters((self.lcdim, 2 * self.lcdim))
-                    self.highwayBias = self.model.add_parameters((self.lcdim))
+            if self.highway:
+                self.highwayLayer = self.model.add_parameters((self.cdims, 2 * self.cdims))
+                self.highwayBias = self.model.add_parameters((self.cdims))
 
 
         dims = self.pdims  # Input dimension for word-level LSTMs
         if not self.noword:                dims += self.wdims
-        if self.usechar or self.usejamo:   dims += self.lcdim
+        if self.usechar or self.usejamo:   dims += self.cdims
 
         if self.bibiFlag:
             self.surfaceBuilders = [VanillaLSTMBuilder(1, dims, self.ldims * 0.5, self.model),
@@ -221,36 +217,31 @@ class ArcHybridLSTM:
     def getCharacterEmbedding(self, word, train):
         if word == "*root*": return self.charLookupRoot[0]
 
-        cforward  = self.charBuilder.initial_state()
-
         # Forward
+        cforward  = self.charBuilder.initial_state()
         for char in unicode(word,"utf-8"):
             charvec = self.getCharVec(char, train) if self.usechar else None
             jamovec = self.getJamoVec(char, train) if self.usejamo else None
             cinput = concatenate(filter(None, [charvec, jamovec]))
             cforward = cforward.add_input(cinput)
 
-        if self.fbchar:
-            # Backward
-            cbackward  = self.charBuilderBack.initial_state()
-            for char in reversed(unicode(word,"utf-8")):
-                charvec = self.getCharVec(char, train) if self.usechar else None
-                jamovec = self.getJamoVec(char, train) if self.usejamo else None
-                cinput = concatenate(filter(None, [charvec, jamovec]))
-                cbackward = cbackward.add_input(cinput)
+        # Backward
+        cbackward  = self.charBuilderBack.initial_state()
+        for char in reversed(unicode(word,"utf-8")):
+            charvec = self.getCharVec(char, train) if self.usechar else None
+            jamovec = self.getJamoVec(char, train) if self.usejamo else None
+            cinput = concatenate(filter(None, [charvec, jamovec]))
+            cbackward = cbackward.add_input(cinput)
 
-            fb = concatenate([cforward.output(), cbackward.output()])
-            result0 = self.fbcharLayer.expr() * fb + self.fbcharBias.expr()
-            result1 = self.activation(result0)
-            if self.highway:
-                mask = logistic(self.highwayLayer.expr() * fb + self.highwayBias.expr())
-                ones = concatenate([scalarInput(1.0) for _ in range(self.lcdim)])
-                result = cwise_multiply(mask, result1) + cwise_multiply(ones - mask, result0)
-            else:
-                result = result1
-
+        fb = concatenate([cforward.output(), cbackward.output()])
+        result0 = self.fbcharLayer.expr() * fb + self.fbcharBias.expr()
+        result1 = self.activation(result0)
+        if self.highway:
+            mask = logistic(self.highwayLayer.expr() * fb + self.highwayBias.expr())
+            ones = concatenate([scalarInput(1.0) for _ in range(self.cdims)])
+            result = cmult(mask, result1) + cmult(ones - mask, result0)
         else:
-            result = cforward.output()
+            result = result1
 
         return result
 
@@ -389,7 +380,7 @@ class ArcHybridLSTM:
                 elif self.dist == "l2":  # L2 norm
                     err = squared_distance(gold, pred)
                     #diff = gold - pred
-                    #sqdiff = cwise_multiply(diff, diff)
+                    #sqdiff = cmult(diff, diff)
                     #err = esum([pick(sqdiff,i) for i in xrange(self.wdims)])
 
                 elif self.dist == "inf":  # Linf norm
@@ -397,11 +388,11 @@ class ArcHybridLSTM:
                     err = emax([emax([pick(diff,i), -pick(diff,i)]) for i in xrange(self.wdims)])
 
                 elif self.dist == "cos":  # NEGATIVE cosine similarity
-                    sqgold = cwise_multiply(gold, gold)
+                    sqgold = cmult(gold, gold)
                     gold_norm = scalarInput(sqrt(esum([pick(sqgold,i) for i in xrange(self.wdims)]).value()))
                     gold_unit = cdiv(gold, concatenate([gold_norm for i in xrange(self.wdims)]))
 
-                    sqpred = cwise_multiply(pred, pred)
+                    sqpred = cmult(pred, pred)
                     pred_norm = scalarInput(sqrt(esum([pick(sqpred,i) for i in xrange(self.wdims)]).value()))
                     pred_unit = cdiv(pred, concatenate([pred_norm for i in xrange(self.wdims)]))
 
