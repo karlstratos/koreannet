@@ -5,7 +5,7 @@ KoreanNet is a neural architecture for the unique compositional orthography of t
 This package implements KoreanNet for dependency parsing by extending the [BiLSTM parser of Kiperwasser and Goldberg (2016)](https://github.com/elikip/bist-parser) using the Korean Unicode manipulation tools implemented [here](https://github.com/JDongian/python-jamo).
 
 ### Prerequisites
-- [Dynet for Python](https://github.com/clab/dynet)
+- [Dynet for Python (version 1.1)](https://github.com/clab/dynet/tree/v1.1)
 - [Korean treebank in the universal treebank v2](https://github.com/ryanmcd/uni-dep-tb)
 
 ### Training Commands
