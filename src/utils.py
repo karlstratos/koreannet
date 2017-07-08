@@ -1,6 +1,7 @@
 from collections import Counter
 import re
-from jamo import decompose
+from jamo import decompose, is_jamo
+import sys
 
 class ConllEntry:
     def __init__(self, id, form, pos, cpos, parent_id=None, relation=None):
@@ -92,7 +93,7 @@ def read_conll(fh, proj):
                 if not proj or isProj(tokens):
                     yield tokens
                 else:
-                    print 'Non-projective sentence dropped'
+                    #print 'Non-projective sentence dropped'
                     dropped += 1
                 read += 1
             tokens = [root]
@@ -103,7 +104,7 @@ def read_conll(fh, proj):
         yield tokens
 
     print dropped, 'dropped non-projective sentences.'
-    print read, 'sentences read.'
+    print read, 'sentences read, only ', read - dropped, ' are projective'
 
 
 def write_conll(fn, conll_gen):
@@ -124,3 +125,37 @@ cposTable = {"PRP$": "PRON", "VBG": "VERB", "VBD": "VERB", "VBN": "VERB", ",": "
              ":": ".", "NNS": "NOUN", "NNP": "NOUN", "``": ".", "WRB": "ADV", "CC": "CONJ", "LS": "X", "PDT": "DET", "RBS": "ADV", "RBR": "ADV", "CD": "NUM", "EX": "DET",
              "IN": "ADP", "WP$": "PRON", "MD": "VERB", "NNPS": "NOUN", "JJS": "ADJ", "JJR": "ADJ", "SYM": "X", "VB": "VERB", "UH": "X", "ROOT-POS": "ROOT-CPOS",
              "-LRB-": ".", "-RRB-": "."}
+
+if __name__ == '__main__':
+    jamos, j2i, chars, c2i, words, w2i, pos, rels = vocab(sys.argv[1])
+    print
+    print '# words: ', len(w2i)
+    print ' '.join(words.keys()[-min(100, len(words)):])
+    print
+
+    print '# chars: ', len(c2i)
+    print ' '.join(chars.keys()[-min(100, len(chars)):])
+    print
+
+
+    hangul_chars = {}
+    for char in chars:
+        if len(decompose(char)) > 1:
+            hangul_chars[char] = True
+
+    print '# Hangul chars: ', len(hangul_chars)
+    print ' '.join(hangul_chars.keys()[-min(100, len(hangul_chars)):])
+    print
+
+    print '# jamos: ', len(j2i)
+    print ' '.join(jamos.keys()[-min(100, len(jamos)):])
+    print
+
+    hangul_jamos = {}
+    for jamo in jamos:
+        if is_jamo(jamo):
+            hangul_jamos[jamo] = True
+
+    print '# Hangul jamos: ', len(hangul_jamos)
+    print ' '.join(hangul_jamos.keys())
+    print

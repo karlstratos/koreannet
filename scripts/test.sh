@@ -2,7 +2,7 @@
 MAIN=src/parser.py
 OUTDIR=$1
 MODELNUM=$2
-TEST=../data/ko-universal-test.conll
+TEST=$3
 
 python $MAIN \
     --predict \

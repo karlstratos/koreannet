@@ -120,19 +120,22 @@ if __name__ == '__main__':
             devpath = os.path.join(options.output, 'dev_epoch_' + str(epoch+1) + '.conll')
             utils.write_conll(devpath, parser.Predict(options.conll_dev))
             os.system('perl src/utils/eval.pl -g ' + options.conll_dev + ' -s ' + devpath  + ' > ' + devpath + '.txt')
+            must_save = False
             with open(devpath + '.txt') as evalf:
                 las = float(evalf.readline().split()[-2])
                 if las > best_las:
                     print 'New best LAS', las
                     best_las = las
                     best_epoch = epoch
+                    must_save = True
 
             print 'Finished predicting dev'
-            parser.Save(os.path.join(options.output, "model" + str(epoch+1)))
+            if must_save:  # Save disk space...
+                parser.Save(os.path.join(options.output, "model"))
 
         if options.conll_test:
             print 'Using best model', "model" + str(best_epoch+1), ' to run on test'
-            parser.Load(os.path.join(options.output, "model" + str(best_epoch+1)))
+            parser.Load(os.path.join(options.output, "model"))
             tespath = os.path.join(options.output, 'test_pred.conll')
             ts = time.time()
             pred = list(parser.Predict(options.conll_test))
