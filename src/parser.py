@@ -11,7 +11,7 @@ if __name__ == '__main__':
     parser.add_option("--test", dest="conll_test", help="Annotated CONLL test file", metavar="FILE", default="../data/ko-universal-test.conll")
     parser.add_option("--extrn", dest="external_embedding", help="External embeddings", metavar="FILE")
     parser.add_option("--model", dest="model", help="Load/Save model file", metavar="FILE", default="barchybrid.model")
-    parser.add_option("--cembedding", type="int", dest="cembedding_dims", default=50)
+    parser.add_option("--cembedding", type="int", dest="cembedding_dims", default=100)
     parser.add_option("--wembedding", type="int", dest="wembedding_dims", default=100)
     parser.add_option("--pembedding", type="int", dest="pembedding_dims", default=0)
     parser.add_option("--rembedding", type="int", dest="rembedding_dims", default=25)
