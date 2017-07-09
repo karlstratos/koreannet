@@ -14,9 +14,7 @@ if __name__ == '__main__':
     parser.add_option("--cembedding", type="int", dest="cembedding_dims", default=100)
     parser.add_option("--wembedding", type="int", dest="wembedding_dims", default=100)
     parser.add_option("--pembedding", type="int", dest="pembedding_dims", default=0)
-    parser.add_option("--rembedding", type="int", dest="rembedding_dims", default=25)
     parser.add_option("--epochs", type="int", default=30)
-    parser.add_option("--pepochs", type="int", default=10)
     parser.add_option("--hidden", type="int", dest="hidden_units", default=100)
     parser.add_option("--k", type="int", dest="window", default=3)
     parser.add_option("--lr", type="float", dest="learning_rate", default=0.1)
@@ -31,9 +29,6 @@ if __name__ == '__main__':
     parser.add_option("--noword", action="store_true", default=False)
     parser.add_option("--usechar", action="store_true", default=False)
     parser.add_option("--usejamo", action="store_true", default=False)
-    parser.add_option("--pretrain", action="store_true", default=False)
-    parser.add_option("--highway", action="store_true", default=False)
-    parser.add_option("--dist", type="string", default="l2")
     parser.add_option("--usehead", action="store_true", dest="headFlag", default=True)
     parser.add_option("--userlmost", action="store_true", dest="rlFlag", default=False)
     parser.add_option("--userl", action="store_true", dest="rlMostFlag", default=True)
@@ -57,7 +52,6 @@ if __name__ == '__main__':
         print 'word dim:', options.wembedding_dims
         print 'char dim:', options.cembedding_dims
         print 'pos dim:', options.pembedding_dims
-        if options.pretrain: print 'Pretraining loss:', options.dist
         print '----------------------------'
 
         external_embedding = {}
@@ -106,11 +100,6 @@ if __name__ == '__main__':
             for word in external_embedding:
                 w = parser.vocab[word]  # DON'T use w2i, use parser.vocab!
                 parser.wlookup.init_row(w, external_embedding[word])
-
-        if options.pretrain:
-            assert options.usechar or options.usejamo
-            assert options.lcdim == options.wembedding_dims
-            parser.Pretrain(external_embedding, options.pepochs)
 
         best_las = 0.0
         best_epoch = 0

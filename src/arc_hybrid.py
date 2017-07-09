@@ -28,7 +28,6 @@ class ArcHybridLSTM:
         self.cdims = options.cembedding_dims
         self.wdims = options.wembedding_dims
         self.pdims = options.pembedding_dims
-        self.rdims = options.rembedding_dims
         self.layers = options.lstm_layers
         self.jamosCount = jamos
         # 0: unknown non-Hangul symbol, 1: unknown Jamo, 2: empty consonant
@@ -54,9 +53,6 @@ class ArcHybridLSTM:
         self.noword = options.noword
         self.usechar = options.usechar
         self.usejamo = options.usejamo
-        self.pretrain = options.pretrain
-        self.highway = options.highway
-        self.dist = options.dist
         self.outdir = options.output
 
         if self.usechar or self.usejamo:
@@ -75,10 +71,6 @@ class ArcHybridLSTM:
                 self.jamoLookup = self.model.add_lookup_parameters((len(jamos) + 3, self.cdims))
                 self.jamoLayer = self.model.add_parameters((self.cdims, 3 * self.cdims))
                 self.jamoBias = self.model.add_parameters((self.cdims))
-
-            if self.highway:
-                self.highwayLayer = self.model.add_parameters((self.cdims, 2 * self.cdims))
-                self.highwayBias = self.model.add_parameters((self.cdims))
 
 
         dims = self.pdims  # Input dimension for word-level LSTMs
@@ -107,12 +99,9 @@ class ArcHybridLSTM:
         vocab_size = len(words) if not self.noword else 0
         self.wlookup = self.model.add_lookup_parameters((len(words) + 3, self.wdims))
         self.plookup = self.model.add_lookup_parameters((len(pos) + 3, self.pdims))
-        self.rlookup = self.model.add_lookup_parameters((len(rels), self.rdims))
 
         self.word2lstm = self.model.add_parameters((self.ldims, self.wdims + self.pdims))
         self.word2lstmbias = self.model.add_parameters((self.ldims))
-        self.lstm2lstm = self.model.add_parameters((self.ldims, self.ldims * self.nnvecs + self.rdims))
-        self.lstm2lstmbias = self.model.add_parameters((self.ldims))
 
         self.hidLayer = self.model.add_parameters((self.hidden_units, self.ldims * self.nnvecs * (self.k + 1)))
         self.hidBias = self.model.add_parameters((self.hidden_units))
@@ -235,14 +224,7 @@ class ArcHybridLSTM:
 
         fb = concatenate([cforward.output(), cbackward.output()])
         result0 = self.fbcharLayer.expr() * fb + self.fbcharBias.expr()
-        result1 = self.activation(result0)
-        if self.highway:
-            mask = logistic(self.highwayLayer.expr() * fb + self.highwayBias.expr())
-            ones = concatenate([scalarInput(1.0) for _ in range(self.cdims)])
-            result = cmult(mask, result1) + cmult(ones - mask, result0)
-        else:
-            result = result1
-
+        result = self.activation(result0)
         return result
 
     def getInitialWordEmbedding(self, word, pos, form, train):
@@ -351,80 +333,6 @@ class ArcHybridLSTM:
 
                 renew_cg()
                 yield [sentence[-1]] + sentence[:-1]
-
-    def Pretrain(self, external_embedding, num_epochs):
-        with open(os.path.join(self.outdir, 'pretrain-initial'), 'w') as predf:
-            for word in external_embedding:
-                renew_cg()
-                pred = self.getCharacterEmbedding(word, False).vec_value()
-                predf.write(word)
-                for v in pred: predf.write(' '+str(v))
-                predf.write('\n')
-
-        renew_cg()
-        trainer = AdamTrainer(self.model)
-        errs = []
-        for epoch in xrange(num_epochs):
-            print 'Pretraining epoch', epoch,
-            total_loss = 0.0
-            for word in external_embedding:
-                gold = vecInput(self.wdims)
-                gold.set(external_embedding[word])
-                pred = self.getCharacterEmbedding(word, True)
-
-                if self.dist == "l1":  # L1 norm
-                    err = l1_distance(gold, pred)
-                    #diff = gold - pred
-                    #err = esum([emax([pick(diff,i), -pick(diff,i)]) for i in xrange(self.wdims)])
-
-                elif self.dist == "l2":  # L2 norm
-                    err = squared_distance(gold, pred)
-                    #diff = gold - pred
-                    #sqdiff = cmult(diff, diff)
-                    #err = esum([pick(sqdiff,i) for i in xrange(self.wdims)])
-
-                elif self.dist == "inf":  # Linf norm
-                    diff = gold - pred
-                    err = emax([emax([pick(diff,i), -pick(diff,i)]) for i in xrange(self.wdims)])
-
-                elif self.dist == "cos":  # NEGATIVE cosine similarity
-                    sqgold = cmult(gold, gold)
-                    gold_norm = scalarInput(sqrt(esum([pick(sqgold,i) for i in xrange(self.wdims)]).value()))
-                    gold_unit = cdiv(gold, concatenate([gold_norm for i in xrange(self.wdims)]))
-
-                    sqpred = cmult(pred, pred)
-                    pred_norm = scalarInput(sqrt(esum([pick(sqpred,i) for i in xrange(self.wdims)]).value()))
-                    pred_unit = cdiv(pred, concatenate([pred_norm for i in xrange(self.wdims)]))
-
-                    err = -dot_product(gold_unit, pred_unit)
-
-                else:
-                    print 'unknown dist:', self.dist
-                    assert False
-
-                errs.append(err)
-                loss = err.scalar_value()
-                total_loss += loss
-
-                if len(errs) > 50:
-                    eerrs = esum(errs)
-                    eerrs.scalar_value()
-                    eerrs.backward()
-                    trainer.update()
-                    errs = []
-                    renew_cg()
-
-            print "Loss: ", total_loss / len(external_embedding)
-            total_loss = 0.0
-            trainer.update_epoch()
-
-        with open(os.path.join(self.outdir, 'pretrain-final'), 'w') as predf:
-            for word in external_embedding:
-                renew_cg()
-                pred = self.getCharacterEmbedding(word, False).vec_value()
-                predf.write(word)
-                for v in pred: predf.write(' '+str(v))
-                predf.write('\n')
 
     def Train(self, conll_path):
         mloss = 0.0
